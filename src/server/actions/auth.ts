@@ -45,7 +45,7 @@ export async function createFirm(formData: FormData) {
   }
   if (phoneRaw && !normalizeIndianMobile(phoneRaw)) return { error: "Enter a 10-digit Indian mobile." };
 
-  const { error } = await supabase.schema("app").rpc("create_firm", {
+  const { error } = await supabase.rpc("crmpro_create_firm", {
     p_name: name,
     p_city: city,
     p_state_code: stateCode,
@@ -59,7 +59,7 @@ export async function createFirm(formData: FormData) {
 export async function acceptInvite(token: string) {
   const { createClient } = await import("@/lib/supabase/server");
   const supabase = await createClient();
-  const { error } = await supabase.schema("app").rpc("accept_invite", { p_token: token });
+  const { error } = await supabase.rpc("crmpro_accept_invite", { p_token: token });
   if (error) return { error: error.message };
   redirect("/dashboard");
 }
@@ -67,7 +67,7 @@ export async function acceptInvite(token: string) {
 export async function acceptPortalInvite(token: string) {
   const { createClient } = await import("@/lib/supabase/server");
   const supabase = await createClient();
-  const { error } = await supabase.schema("app").rpc("accept_portal_invite", { p_token: token });
+  const { error } = await supabase.rpc("crmpro_accept_portal_invite", { p_token: token });
   if (error) return { error: error.message };
   redirect("/portal");
 }

@@ -235,7 +235,7 @@ export async function uploadDocument(formData: FormData) {
   const safeName = file.name.replace(/[^\w.\- ]+/g, "_");
   const path = `${session.firm.id}/${accountId}/${fy}/${crypto.randomUUID()}-${safeName}`;
   const bytes = new Uint8Array(await file.arrayBuffer());
-  const { error: uploadError } = await session.supabase.storage.from("documents").upload(path, bytes, {
+  const { error: uploadError } = await session.supabase.storage.from("crmpro_documents").upload(path, bytes, {
     contentType: file.type || "application/octet-stream",
     upsert: false,
   });
@@ -289,7 +289,7 @@ export async function uploadWithToken(formData: FormData) {
   const safeName = file.name.replace(/[^\w.\- ]+/g, "_");
   const path = `${request.firm_id}/${request.account_id}/${request.financial_year}/${crypto.randomUUID()}-${safeName}`;
   const bytes = new Uint8Array(await file.arrayBuffer());
-  const { error: uploadError } = await admin.storage.from("documents").upload(path, bytes, { contentType: file.type || "application/octet-stream" });
+  const { error: uploadError } = await admin.storage.from("crmpro_documents").upload(path, bytes, { contentType: file.type || "application/octet-stream" });
   if (uploadError) return { error: uploadError.message };
   const { error } = await admin.from("documents").insert({
     firm_id: request.firm_id,
