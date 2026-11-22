@@ -1,17 +1,34 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { brand } from "@/lib/brand";
 import { Button } from "@/components/ui/button";
 
-export function AuthPanel({ mode, unconfigured = false }: { mode: "login" | "signup"; unconfigured?: boolean }) {
+const supabaseConfigured = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+
+export function AuthPanel({ mode }: { mode: "login" | "signup" }) {
+  const unconfigured = !supabaseConfigured;
   const [message, setMessage] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState(mode === "login" ? "rajesh.iyer@kaveri.test" : "");
   const [password, setPassword] = useState(mode === "login" ? "Kaveri#2026" : "");
+
+  useEffect(() => {
+    if (unconfigured) return;
+    let cancelled = false;
+    createBrowserSupabase()
+      .auth.getSession()
+      .then(({ data }) => {
+        if (!cancelled && data.session) window.location.assign("/dashboard");
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [unconfigured]);
 
   async function magic() {
     setPending(true);

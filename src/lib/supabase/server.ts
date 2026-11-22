@@ -1,12 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { unstable_rethrow } from "next/navigation";
 import { supabaseCookieOptions } from "@/lib/supabase/options";
-
-export function isSupabaseConfigured() {
-  const url = process.env.SUPABASE_INTERNAL_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  return Boolean(url && key);
-}
 
 export async function createClient() {
   const cookieStore = await cookies();
@@ -22,8 +17,10 @@ export async function createClient() {
         setAll(cookiesToSet) {
           try {
             cookiesToSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options));
-          } catch {
+          } catch (error) {
             // Server Components cannot set cookies. The proxy refreshes the session.
+            // Next.js uses this error to opt a route out of static rendering; it must propagate.
+            unstable_rethrow(error);
           }
         },
       },
