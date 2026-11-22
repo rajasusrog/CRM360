@@ -11,7 +11,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   const staffOk = session.profile && session.profile.firm_id === document.firm_id;
   const clientOk = session.client && session.client.account_id === document.account_id && document.client_visible;
   if (!staffOk && !clientOk) return new Response("Not found", { status: 404 });
-  const { data, error } = await admin.storage.from("documents").download(document.storage_path);
+  const { data, error } = await admin.storage.from("crmpro_documents").download(document.storage_path);
   if (error || !data) return new Response("File is not in storage yet.", { status: 404 });
   const bytes = new Uint8Array(await data.arrayBuffer());
   return new Response(bytes, {
