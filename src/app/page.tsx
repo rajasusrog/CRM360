@@ -46,7 +46,7 @@ export default function HomePage() {
                 Start the 14-day trial
               </Link>
               <Link href="/login" className="rounded-lg border border-primary/30 px-4 py-2.5 text-sm">
-                View the demo firm
+                Sign in
               </Link>
             </div>
           </div>
