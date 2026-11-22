@@ -11,7 +11,8 @@ export async function updateSession(request: NextRequest) {
   if (!url || !key) return response;
 
   const supabase = createServerClient(url, key, {
-    cookieOptions: supabaseCookieOptions,
+    db: { schema: "crmpro" },
+      cookieOptions: supabaseCookieOptions,
     cookies: {
       getAll() {
         return request.cookies.getAll();

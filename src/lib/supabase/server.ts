@@ -11,6 +11,7 @@ export async function createClient() {
     process.env.SUPABASE_INTERNAL_URL || url,
     key,
     {
+      db: { schema: "crmpro" },
       cookieOptions: supabaseCookieOptions,
       cookies: {
         getAll() {
