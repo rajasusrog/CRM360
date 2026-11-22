@@ -141,14 +141,16 @@ The owner’s subscription screen creates a subscription and redirects to Razorp
 
 Deploy this as a **Worker**, not a Pages site. Pages looks for a `dist` folder and will fail after a normal Next build. `wrangler deploy` also fails with `Could not find compiled Open Next config` if the build command was only `next build`.
 
-In the Workers project settings:
+In the Workers project settings, leave these exactly as written:
 
-- Build command: `npm run build` (this runs `opennextjs-cloudflare build`)
+- Build command: `npm run build`
 - Deploy command: `npx wrangler deploy`
+
+`npm run build` runs `opennextjs-cloudflare build`. That adapter compiles Next.js with `npm run build:next` (`next build`), then writes `.open-next/worker.js`. The inner command is set in `open-next.config.ts` as `buildCommand`. It must stay `npm run build:next`. If `build` itself is `opennextjs-cloudflare build` and OpenNext is left on its default (`npm run build`), the builder calls itself until Cloudflare kills it with status 137.
 
 Set `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and `NEXT_PUBLIC_APP_URL` as build variables. Add the Worker URL to the Supabase auth redirect allow-list before asking anyone to sign in.
 
-`npm run build:next` is the plain Next.js production build, with no Cloudflare adapter. `npm run preview:cf` builds and opens a local Workers preview.
+`npm run preview:cf` builds and opens a local Workers preview.
 
 ## Useful paths
 
