@@ -4,5 +4,5 @@ import { supabasePublicConfig } from "@/lib/supabase/public-env";
 
 export function createBrowserSupabase() {
   const { url, key } = supabasePublicConfig();
-  return createBrowserClient(url, key, { cookieOptions: supabaseCookieOptions, isSingleton: false });
+  return createBrowserClient(url, key, { cookieOptions: supabaseCookieOptions });
 }
