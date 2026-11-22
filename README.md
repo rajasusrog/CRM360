@@ -139,21 +139,16 @@ The owner’s subscription screen creates a subscription and redirects to Razorp
 
 ## Cloudflare
 
-This repo does not deploy anywhere by itself.
+Deploy this as a **Worker**, not a Pages site. Pages looks for a `dist` folder and will fail after a normal Next build. `wrangler deploy` also fails with `Could not find compiled Open Next config` if the build command was only `next build`.
 
-```bash
-npx wrangler login
-# secrets, not wrangler.jsonc
-npx wrangler secret put NEXT_PUBLIC_SUPABASE_URL
-npx wrangler secret put NEXT_PUBLIC_SUPABASE_ANON_KEY
-npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY
-npx wrangler secret put NEXT_PUBLIC_APP_URL
-npm run deploy:cf
-```
+In the Workers project settings:
 
-`npm run preview:cf` builds with OpenNext and opens a local Workers preview. `wrangler.jsonc` names the worker `unikorn360`, enables `nodejs_compat`, and binds `WORKER_SELF_REFERENCE` so OpenNext can revalidate. Add the Workers URL to the Supabase auth redirect allow-list before asking anyone to sign in.
+- Build command: `npm run build` (this runs `opennextjs-cloudflare build`)
+- Deploy command: `npx wrangler deploy`
 
-Build the Node app on its own with `npm run build`.
+Set `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and `NEXT_PUBLIC_APP_URL` as build variables. Add the Worker URL to the Supabase auth redirect allow-list before asking anyone to sign in.
+
+`npm run build:next` is the plain Next.js production build, with no Cloudflare adapter. `npm run preview:cf` builds and opens a local Workers preview.
 
 ## Useful paths
 
