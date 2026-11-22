@@ -1,5 +1,5 @@
 -- Generated from src/lib/compliance/rules.ts. Re-run: node --experimental-strip-types scripts/build-rules-sql.ts
-insert into public.compliance_rules (id, firm_id, code, variant, name, frequency, entity_types, gst_frequencies, requires_gstin, audit_mode, state_codes, notes)
+insert into crmpro.compliance_rules (id, firm_id, code, variant, name, frequency, entity_types, gst_frequencies, requires_gstin, audit_mode, state_codes, notes)
 values
   ('d1000000-0000-4000-8000-000000000001', null, 'GSTR1', 'monthly', 'GSTR-1', 'monthly', null, array['monthly']::text[], true, 'any', null, 'Monthly statement of outward supplies. Due on the 11th of the following month.'),
   ('d1000000-0000-4000-8000-000000000002', null, 'GSTR1', 'quarterly', 'GSTR-1 (QRMP)', 'quarterly', null, array['quarterly']::text[], true, 'any', null, 'Quarterly GSTR-1 for QRMP taxpayers. Due on the 13th of the month after the quarter.'),
@@ -14,7 +14,7 @@ values
   ('d1000000-0000-4000-8000-000000000011', null, 'MCA_MGT7', 'annual', 'MGT-7', 'annual', array['pvt_ltd', 'public_ltd']::text[], null, false, 'any', null, 'Annual return with ROC. Default assumes 60 days from a 30 September AGM (29 November).'),
   ('d1000000-0000-4000-8000-000000000012', null, 'LLP_8', 'annual', 'LLP Form 8', 'annual', array['llp']::text[], null, false, 'any', null, 'Statement of Account & Solvency. Due 30 October.'),
   ('d1000000-0000-4000-8000-000000000013', null, 'LLP_11', 'annual', 'LLP Form 11', 'annual', array['llp']::text[], null, false, 'any', null, 'Annual return of LLP. Due 30 May.');
-insert into public.compliance_rule_periods (rule_id, period_key, label, start_month, start_year_offset, end_month, end_year_offset, due_month, due_day, due_year_offset, sort)
+insert into crmpro.compliance_rule_periods (rule_id, period_key, label, start_month, start_year_offset, end_month, end_year_offset, due_month, due_day, due_year_offset, sort)
 values
   ('d1000000-0000-4000-8000-000000000001', 'M04', 'Apr {{y0}}', 4, 0, 4, 0, 5, 11, 0, 1),
   ('d1000000-0000-4000-8000-000000000001', 'M05', 'May {{y0}}', 5, 0, 5, 0, 6, 11, 0, 2),
