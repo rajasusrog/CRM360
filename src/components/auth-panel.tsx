@@ -18,6 +18,8 @@ export function AuthPanel({ mode }: { mode: "login" | "signup" }) {
   const [password, setPassword] = useState(mode === "login" ? "Kaveri#2026" : "");
 
   useEffect(() => {
+    const error = new URLSearchParams(window.location.search).get("error");
+    if (error) setMessage(error);
     if (unconfigured) return;
     let cancelled = false;
     createBrowserSupabase()
