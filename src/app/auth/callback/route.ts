@@ -4,7 +4,7 @@ import { supabaseCookieOptions } from "@/lib/supabase/options";
 import { supabasePublicConfig } from "@/lib/supabase/public-env";
 
 function safeNext(value: string | null) {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) return "/dashboard";
+  if (!value || !value.startsWith("/") || value.startsWith("//") || /[\\\r\n]/.test(value)) return "/auth/continue";
   return value;
 }
 
@@ -20,7 +20,8 @@ export async function GET(request: NextRequest) {
   const tokenHash = url.searchParams.get("token_hash");
   const type = url.searchParams.get("type");
   const destination = new URL(safeNext(url.searchParams.get("next")), url.origin);
-  let response = NextResponse.redirect(destination);
+  const response = NextResponse.redirect(destination);
+  response.headers.set("Cache-Control", "private, no-store");
   const { url: supabaseUrl, key } = supabasePublicConfig();
   if (!supabaseUrl || !key) return loginRedirect(url.origin, "Sign-in is not configured on this deployment.");
 
@@ -48,6 +49,8 @@ export async function GET(request: NextRequest) {
         type: type as "email" | "magiclink" | "signup" | "invite" | "recovery",
       });
       if (error) return loginRedirect(url.origin, error.message);
+    } else {
+      return loginRedirect(url.origin, "This sign-in link is missing its verification details. Request a new link.");
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Sign-in could not be completed.";
