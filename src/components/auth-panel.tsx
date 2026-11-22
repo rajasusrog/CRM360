@@ -6,7 +6,7 @@ import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { brand } from "@/lib/brand";
 import { Button } from "@/components/ui/button";
 
-export function AuthPanel({ mode }: { mode: "login" | "signup" }) {
+export function AuthPanel({ mode, unconfigured = false }: { mode: "login" | "signup"; unconfigured?: boolean }) {
   const [message, setMessage] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [fullName, setFullName] = useState("");
@@ -100,6 +100,11 @@ export function AuthPanel({ mode }: { mode: "login" | "signup" }) {
         </p>
       </div>
       <div className="grid gap-4 rounded-2xl bg-card p-5 ring-1 ring-foreground/10">
+        {unconfigured ? (
+          <p className="text-sm text-destructive">
+            Sign-in is not configured on this deployment. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY as Cloudflare build variables, then redeploy.
+          </p>
+        ) : null}
         {mode === "signup" ? (
           <label className="grid gap-1.5 text-sm">
             <span className="text-muted-foreground">Your name</span>
@@ -126,13 +131,13 @@ export function AuthPanel({ mode }: { mode: "login" | "signup" }) {
             className="h-9 rounded-lg border border-input bg-background px-2.5"
           />
         </label>
-        <Button type="button" disabled={pending || !email || !password} onClick={passwordSignIn}>
+        <Button type="button" disabled={unconfigured || pending || !email || !password} onClick={passwordSignIn}>
           {mode === "login" ? "Sign in with password" : "Create account with password"}
         </Button>
-        <Button type="button" variant="outline" disabled={pending || !email} onClick={magic}>
+        <Button type="button" variant="outline" disabled={unconfigured || pending || !email} onClick={magic}>
           Email me a magic link
         </Button>
-        <Button type="button" variant="secondary" onClick={google}>
+        <Button type="button" variant="secondary" disabled={unconfigured} onClick={google}>
           Continue with Google
         </Button>
         {message ? <p className="text-sm text-muted-foreground">{message}</p> : null}
