@@ -1,0 +1,25 @@
+export const brand = {
+  name: "Unikorn360",
+  line: "Customer Relationship Management",
+  headline: "Manage Leads. Build Relationships.",
+  tagline: "Intelligent Systems. Real-World Impact.",
+  website: "https://www.unikorn360.com",
+  websiteLabel: "www.unikorn360.com",
+  email: "contact.unikorn360@gmail.com",
+  phone: "+91 98848 24360",
+  phoneTel: "+919884824360",
+  founder: "S. Rajkumar",
+  role: "Founder & CEO",
+  addressLines: [
+    "Old No: 1078/B, New No: 1708/1,",
+    "VK Complex, P.J.N. Road, 1st Floor, Shop No: 3,",
+    "Kamarajapuram, Vaniyambadi,",
+    "Tirupathur District, Tamil Nadu – 635751, India",
+  ],
+  offerings: [
+    "Lead & Contact Management",
+    "Sales Pipeline Tracking",
+    "Tasks & Follow-ups",
+    "Customer Activity History",
+  ],
+};

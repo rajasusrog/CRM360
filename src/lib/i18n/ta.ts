@@ -1,0 +1,28 @@
+import type { MessageKey } from "./en";
+
+export const ta: Record<MessageKey, string> = {
+  "app.name": "Unikorn360",
+  "nav.dashboard": "டாஷ்போர்டு",
+  "nav.leads": "லீட்கள்",
+  "nav.contacts": "தொடர்புகள்",
+  "nav.clients": "வாடிக்கையாளர்கள்",
+  "nav.pipeline": "பைப்லைன்",
+  "nav.activities": "செயல்பாடுகள்",
+  "nav.calendar": "நாட்காட்டி",
+  "nav.compliance": "இணக்க நாட்காட்டி",
+  "nav.invoices": "விலைப்பட்டியல்",
+  "nav.time": "நேரப் பதிவு",
+  "nav.reports": "அறிக்கைகள்",
+  "nav.settings": "அமைப்புகள்",
+  "nav.notifications": "அறிவிப்புகள்",
+  "dashboard.greeting": "வணக்கம்",
+  "dashboard.subtitle": "இன்று நிறுவனம் கவனிக்க வேண்டியவை.",
+  "action.signOut": "வெளியேறு",
+  "action.search": "நிறுவனத்தில் தேடு",
+  "locale.english": "English",
+  "locale.tamil": "தமிழ்",
+  "portal.home": "உங்கள் பயிற்சி மேசை",
+  "portal.filings": "தாக்கல்கள்",
+  "portal.invoices": "விலைப்பட்டியல்",
+  "portal.documents": "ஆவணங்கள்",
+};

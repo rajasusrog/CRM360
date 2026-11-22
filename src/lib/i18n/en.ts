@@ -1,0 +1,28 @@
+export const en = {
+  "app.name": "Unikorn360",
+  "nav.dashboard": "Dashboard",
+  "nav.leads": "Leads",
+  "nav.contacts": "Contacts",
+  "nav.clients": "Clients",
+  "nav.pipeline": "Pipeline",
+  "nav.activities": "Activities",
+  "nav.calendar": "Calendar",
+  "nav.compliance": "Compliance",
+  "nav.invoices": "Invoices",
+  "nav.time": "Time",
+  "nav.reports": "Reports",
+  "nav.settings": "Settings",
+  "nav.notifications": "Notifications",
+  "dashboard.greeting": "Good day",
+  "dashboard.subtitle": "What the firm owes attention today.",
+  "action.signOut": "Sign out",
+  "action.search": "Search the firm",
+  "locale.english": "English",
+  "locale.tamil": "தமிழ்",
+  "portal.home": "Your practice desk",
+  "portal.filings": "Filings",
+  "portal.invoices": "Invoices",
+  "portal.documents": "Documents",
+} as const;
+
+export type MessageKey = keyof typeof en;
