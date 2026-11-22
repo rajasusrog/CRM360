@@ -1,6 +1,8 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "unikorn360",
+  // Dashboard Worker is crm360. Workers Builds rewrites `name` to that,
+  // but it does not rewrite this service binding, so both must stay crm360.
+  "name": "crm360",
   "main": ".open-next/worker.js",
   "compatibility_date": "2026-11-01",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
@@ -11,7 +13,7 @@
   "services": [
     {
       "binding": "WORKER_SELF_REFERENCE",
-      "service": "unikorn360"
+      "service": "crm360"
     }
   ]
 }
