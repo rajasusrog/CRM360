@@ -20,7 +20,7 @@ These defects were found in source. The exact live trigger has not been establis
 3. Review the diff and commit. Preserve any newer work not present in the uploaded ZIP.
 4. In the Cloudflare Worker, confirm the correct Supabase project URL and public client key are supplied for both build and runtime where required. Use one project consistently across browser and server. Never put the service-role key in a `NEXT_PUBLIC_*` variable.
 5. Set `NEXT_PUBLIC_APP_URL=https://crmpro360.unikorn360.com` if that is your chosen live address. If you choose another address, use that address consistently. The screenshot's domain differs from older README examples.
-6. Supabase → Authentication → URL Configuration: set Site URL to the chosen origin and add its `/auth/callback` URL to the redirect allow-list. Keep local/preview URLs explicit and separate.
+6. Supabase → Authentication → URL Configuration: for a dedicated CRM project, set Site URL to the chosen origin and allow its `/auth/callback` URL. For a project shared by multiple apps, preserve the shared Site URL and verify the CRM sends an explicitly allowed callback; do not change other apps' redirect settings.
 7. Confirm the project's migrations are applied and that the real test user has the right profile/client membership and readable firm. Do not reset production or import the local seed into it.
 8. Rebuild with `npm run build` and deploy via the existing Worker pipeline. Test in a fresh private browser window first.
 
@@ -44,3 +44,9 @@ For a public demo, use a separate Supabase project containing synthetic data; co
 Use `npm ci`, `npm run build`, and `npm test`. The baseline repository has unrelated lint findings; inspect those separately rather than treating a successful build as release readiness.
 
 Verified on 22 November 2026: clean dependency installation succeeded; all 35 non-database tests passed; the full Cloudflare/OpenNext build completed successfully. Database policy tests and hosted login/demo were not verified.
+
+## Hosted setup finding
+
+Inspection of the shared Supabase project found a pre-existing `public.profiles` table with another application's schema: no CRM `firm_id` or `role` columns. `public.firms` and `public.client_users` were absent, and the synthetic demo accounts were absent. A CRM redirect URL was already allowed. These observations do not establish which Supabase project the deployed Worker uses; verify its build/runtime project URL before changing anything.
+
+Do not run this repository's initial migration or seed over the shared database. Existing table names, policies and auth triggers can conflict. Use a dedicated CRM project and apply reviewed migrations there, then configure the Worker consistently. Create real users through the application and verify firm creation, staff/client roles and tenant isolation. A separate demo project may contain synthetic accounts. No hosted database or authentication settings were changed during this inspection.
