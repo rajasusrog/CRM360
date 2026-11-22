@@ -148,7 +148,7 @@ In the Workers project settings, leave these exactly as written:
 
 `npm run build` runs `opennextjs-cloudflare build`. That adapter compiles Next.js with `npm run build:next` (`next build`), then writes `.open-next/worker.js`. The inner command is set in `open-next.config.ts` as `buildCommand`. It must stay `npm run build:next`. If `build` itself is `opennextjs-cloudflare build` and OpenNext is left on its default (`npm run build`), the builder calls itself until Cloudflare kills it with status 137.
 
-Set `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and `NEXT_PUBLIC_APP_URL` as Workers Builds variables. Those values exist only while the build command runs. `npm run build` writes them to a gitignored `.env.production`, and OpenNext copies that file into the Worker. Without the URL and anon key, `/login` and `/signup` cannot reach Supabase. Add `https://crm360.unikorn360.com/auth/callback` to the Supabase auth redirect allow-list before asking anyone to sign in.
+The Worker build already has `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY`. `npm run build` copies those into a gitignored `.env.production` as `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`, which is the only form Next.js will inline into the browser. Add `https://crm360.unikorn360.com/auth/callback` to the Supabase auth redirect allow-list before asking anyone to sign in.
 
 `npm run preview:cf` builds and opens a local Workers preview.
 

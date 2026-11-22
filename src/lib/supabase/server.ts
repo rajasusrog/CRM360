@@ -2,12 +2,14 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { unstable_rethrow } from "next/navigation";
 import { supabaseCookieOptions } from "@/lib/supabase/options";
+import { supabasePublicConfig } from "@/lib/supabase/public-env";
 
 export async function createClient() {
   const cookieStore = await cookies();
+  const { url, key } = supabasePublicConfig();
   return createServerClient(
-    process.env.SUPABASE_INTERNAL_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    process.env.SUPABASE_INTERNAL_URL || url,
+    key,
     {
       cookieOptions: supabaseCookieOptions,
       cookies: {

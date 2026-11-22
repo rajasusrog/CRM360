@@ -1,10 +1,8 @@
 import { createBrowserClient } from "@supabase/ssr";
 import { supabaseCookieOptions } from "@/lib/supabase/options";
+import { supabasePublicConfig } from "@/lib/supabase/public-env";
 
 export function createBrowserSupabase() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { cookieOptions: supabaseCookieOptions, isSingleton: false },
-  );
+  const { url, key } = supabasePublicConfig();
+  return createBrowserClient(url, key, { cookieOptions: supabaseCookieOptions, isSingleton: false });
 }

@@ -3,10 +3,11 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
+import { supabasePublicConfig } from "@/lib/supabase/public-env";
 import { brand } from "@/lib/brand";
 import { Button } from "@/components/ui/button";
 
-const supabaseConfigured = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+const supabaseConfigured = supabasePublicConfig().configured;
 
 export function AuthPanel({ mode }: { mode: "login" | "signup" }) {
   const unconfigured = !supabaseConfigured;
@@ -119,7 +120,7 @@ export function AuthPanel({ mode }: { mode: "login" | "signup" }) {
       <div className="grid gap-4 rounded-2xl bg-card p-5 ring-1 ring-foreground/10">
         {unconfigured ? (
           <p className="text-sm text-destructive">
-            Sign-in is not configured on this deployment. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY as Cloudflare build variables, then redeploy.
+            Sign-in is not configured on this deployment. The build did not receive SUPABASE_URL and SUPABASE_ANON_KEY.
           </p>
         ) : null}
         {mode === "signup" ? (
