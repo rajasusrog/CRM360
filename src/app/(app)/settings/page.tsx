@@ -249,6 +249,10 @@ export default async function SettingsPage() {
             <p className="mt-2 text-xs text-destructive">
               AI database tables are missing. Apply the latest Supabase migration before enabling AI Copilot.
             </p>
+          ) : aiStatus.statusError ? (
+            <p className="mt-2 text-xs text-destructive">
+              Could not verify AI Copilot status or usage: {aiStatus.statusError}
+            </p>
           ) : null}
           {!aiStatus.providerConfigured ? (
             <p className="mt-2 text-xs text-muted-foreground">

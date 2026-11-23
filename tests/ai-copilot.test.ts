@@ -1,11 +1,12 @@
+import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  dailyQuotaForPlan,
   canManageAiSettings,
   canUseAiCopilot,
-  dailyQuotaForPlan,
   resolveAiConfig,
 } from "@/lib/ai/config";
-import { istDayStartUtcIso, runAiFeature } from "@/lib/ai/gateway";
+import { getFirmAiStatus, istDayStartUtcIso, runAiFeature } from "@/lib/ai/gateway";
 import {
   buildSourceMap,
   groundBriefingOutput,
@@ -29,6 +30,7 @@ import type { Firm, Profile } from "@/lib/auth-routing";
 type MockRow = Record<string, unknown>;
 
 type MockDbState = {
+  firms?: MockRow[];
   accounts?: MockRow[];
   leads?: MockRow[];
   contacts?: MockRow[];
@@ -45,10 +47,68 @@ type MockDbState = {
   ai_task_batches?: MockRow[];
   ai_feedback?: MockRow[];
   missingTables?: string[];
+  missingRpcs?: string[];
+  tableErrors?: Record<string, { code?: string; message: string }>;
+  rpcErrors?: Record<string, { code?: string; message: string }>;
+  actor?: { firm: Firm; profile: Profile };
+  now?: () => Date;
 };
 
+function computeTaskBatchHash(
+  relatedType: string | null,
+  relatedId: string | null,
+  tasks: Array<Record<string, unknown>>,
+): string {
+  const canonicalTasks = tasks.map((elem) => ({
+    title: String(elem.title ?? "").trim(),
+    description: String(elem.description ?? "").trim(),
+    assigneeId: elem.assigneeId ? String(elem.assigneeId).trim().toLowerCase() || null : null,
+    dueDate: elem.dueDate ? String(elem.dueDate).trim() || null : null,
+  }));
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        relatedType,
+        relatedId,
+        tasks: canonicalTasks,
+      }),
+    )
+    .digest("hex");
+}
+
+function isReservedActive(row: MockRow, nowIso: string, leaseCutoffIso: string): boolean {
+  if (row.status !== "reserved") return false;
+  if (row.lease_expires_at) {
+    return String(row.lease_expires_at) > nowIso;
+  }
+  return String(row.created_at ?? "") >= leaseCutoffIso;
+}
+
 function createMockSupabase(initial: MockDbState) {
-  const db: Required<Omit<MockDbState, "missingTables">> = {
+  const actor = initial.actor ?? { firm: FIRM_A, profile: PROFILE_STAFF };
+  const nowFn = initial.now ?? (() => new Date());
+  const db: Required<
+    Pick<
+      MockDbState,
+      | "firms"
+      | "accounts"
+      | "leads"
+      | "contacts"
+      | "deals"
+      | "activities"
+      | "compliance_filings"
+      | "engagements"
+      | "invoices"
+      | "documents"
+      | "document_requests"
+      | "profiles"
+      | "ai_firm_settings"
+      | "ai_usage_events"
+      | "ai_task_batches"
+      | "ai_feedback"
+    >
+  > = {
+    firms: [...(initial.firms ?? [actor.firm])],
     accounts: [...(initial.accounts ?? [])],
     leads: [...(initial.leads ?? [])],
     contacts: [...(initial.contacts ?? [])],
@@ -59,13 +119,14 @@ function createMockSupabase(initial: MockDbState) {
     invoices: [...(initial.invoices ?? [])],
     documents: [...(initial.documents ?? [])],
     document_requests: [...(initial.document_requests ?? [])],
-    profiles: [...(initial.profiles ?? [])],
+    profiles: [...(initial.profiles ?? [actor.profile])],
     ai_firm_settings: [...(initial.ai_firm_settings ?? [])],
     ai_usage_events: [...(initial.ai_usage_events ?? [])],
     ai_task_batches: [...(initial.ai_task_batches ?? [])],
     ai_feedback: [...(initial.ai_feedback ?? [])],
   };
   const missing = new Set(initial.missingTables ?? []);
+  const missingRpcs = new Set(initial.missingRpcs ?? []);
 
   function from(table: keyof typeof db) {
     const filters: Array<(row: MockRow) => boolean> = [];
@@ -74,6 +135,9 @@ function createMockSupabase(initial: MockDbState) {
     let insertPayload: MockRow | MockRow[] | null = null;
 
     const execute = async (): Promise<{ data: unknown; count?: number; error: { code?: string; message: string } | null }> => {
+      if (initial.tableErrors?.[table]) {
+        return { data: null, error: initial.tableErrors[table] };
+      }
       if (missing.has(table)) {
         return { data: null, error: { code: "42P01", message: `relation "${table}" does not exist` } };
       }
@@ -92,7 +156,7 @@ function createMockSupabase(initial: MockDbState) {
         }
         const inserted = list.map((item) => ({
           id: item.id ?? crypto.randomUUID(),
-          created_at: item.created_at ?? new Date().toISOString(),
+          created_at: item.created_at ?? nowFn().toISOString(),
           ...item,
         }));
         db[table].push(...inserted);
@@ -134,6 +198,16 @@ function createMockSupabase(initial: MockDbState) {
         filters.push((row) => String(row[col] ?? "") >= val);
         return builder;
       },
+      or(expr: string) {
+        const nowMatch = expr.match(/lease_expires_at\.gt\.([^,)]+)/);
+        const cutoffMatch = expr.match(/created_at\.gte\.([^)]+)\)/);
+        const nowIso = nowMatch?.[1] ?? "";
+        const leaseCutoffIso = cutoffMatch?.[1] ?? "";
+        filters.push(
+          (row) => row.status === "ok" || isReservedActive(row, nowIso, leaseCutoffIso),
+        );
+        return builder;
+      },
       order() {
         return builder;
       },
@@ -154,7 +228,373 @@ function createMockSupabase(initial: MockDbState) {
     return builder;
   }
 
-  return { db, client: { from } as unknown as Parameters<typeof runAiFeature>[0]["supabase"] };
+  function createRpcExecutor(role: "authenticated" | "service_role") {
+    return async function rpc(fnName: string, args: Record<string, unknown> = {}) {
+      if (initial.rpcErrors?.[fnName]) {
+        return { data: null, error: initial.rpcErrors[fnName] };
+      }
+      if (
+        missingRpcs.has(fnName) ||
+        (missing.has("ai_firm_settings") && fnName === "crmpro_reserve_ai_quota") ||
+        (missing.has("ai_task_batches") && fnName === "crmpro_confirm_ai_tasks")
+      ) {
+        return { data: null, error: { code: "42883", message: `function crmpro.${fnName} does not exist` } };
+      }
+
+      if (fnName === "crmpro_reserve_ai_quota") {
+        const now = nowFn();
+        const nowIso = now.toISOString();
+        const leaseExpiresAt = new Date(now.getTime() + 2 * 60_000).toISOString();
+        const settings = db.ai_firm_settings.find((s) => s.firm_id === actor.firm.id);
+        if (!settings || !settings.enabled || !settings.notice_accepted_at) {
+          return {
+            data: {
+              allowed: false,
+              code: "disabled",
+              error: "AI Copilot is disabled for this firm. An owner or partner can enable it in Settings.",
+            },
+            error: null,
+          };
+        }
+
+        const dayStartIso = istDayStartUtcIso(now);
+        const leaseCutoffIso = new Date(now.getTime() - 2 * 60_000).toISOString();
+        const burstCutoffIso = new Date(now.getTime() - 10 * 60_000).toISOString();
+        const dailyQuota = dailyQuotaForPlan(actor.firm);
+
+        const usedToday = db.ai_usage_events.filter(
+          (e) =>
+            e.firm_id === actor.firm.id &&
+            String(e.created_at ?? "") >= dayStartIso &&
+            (e.status === "ok" || isReservedActive(e, nowIso, leaseCutoffIso)),
+        ).length;
+
+        if (usedToday >= dailyQuota) {
+          db.ai_usage_events.push({
+            id: crypto.randomUUID(),
+            firm_id: actor.firm.id,
+            user_id: actor.profile.id,
+            feature: args.p_feature,
+            request_id: args.p_request_id,
+            status: "rate_limited",
+            model_id: args.p_model_id,
+            input_chars: args.p_input_chars,
+            latency_ms: null,
+            lease_expires_at: null,
+            created_at: nowIso,
+          });
+          return {
+            data: {
+              allowed: false,
+              code: "daily_quota_exceeded",
+              daily_quota: dailyQuota,
+              used_today: usedToday,
+            },
+            error: null,
+          };
+        }
+
+        const burstUsed = db.ai_usage_events.filter(
+          (e) =>
+            e.firm_id === actor.firm.id &&
+            e.user_id === actor.profile.id &&
+            String(e.created_at ?? "") >= burstCutoffIso &&
+            (["ok", "provider_error", "validation_error", "aborted"].includes(String(e.status)) ||
+              isReservedActive(e, nowIso, leaseCutoffIso)),
+        ).length;
+
+        if (burstUsed >= 10) {
+          db.ai_usage_events.push({
+            id: crypto.randomUUID(),
+            firm_id: actor.firm.id,
+            user_id: actor.profile.id,
+            feature: args.p_feature,
+            request_id: args.p_request_id,
+            status: "rate_limited",
+            model_id: args.p_model_id,
+            input_chars: args.p_input_chars,
+            latency_ms: null,
+            lease_expires_at: null,
+            created_at: nowIso,
+          });
+          return {
+            data: {
+              allowed: false,
+              code: "burst_limit_exceeded",
+              burst_limit: 10,
+              burst_used: burstUsed,
+              window_minutes: 10,
+            },
+            error: null,
+          };
+        }
+
+        const eventId = crypto.randomUUID();
+        db.ai_usage_events.push({
+          id: eventId,
+          firm_id: actor.firm.id,
+          user_id: actor.profile.id,
+          feature: args.p_feature,
+          request_id: args.p_request_id,
+          status: "reserved",
+          model_id: args.p_model_id,
+          input_chars: args.p_input_chars,
+          latency_ms: null,
+          lease_expires_at: leaseExpiresAt,
+          created_at: nowIso,
+        });
+        return {
+          data: {
+            allowed: true,
+            code: "reserved",
+            event_id: eventId,
+            lease_expires_at: leaseExpiresAt,
+            daily_quota: dailyQuota,
+            used_today: usedToday + 1,
+            burst_limit: 10,
+            burst_used: burstUsed + 1,
+          },
+          error: null,
+        };
+      }
+
+      if (fnName === "crmpro_finalize_ai_usage") {
+        if (role !== "service_role") {
+          return {
+            data: null,
+            error: { code: "42501", message: "permission denied for function crmpro_finalize_ai_usage" },
+          };
+        }
+
+        const firmId = String(args.p_firm_id ?? "");
+        const userId = String(args.p_user_id ?? "");
+        const status = String(args.p_status ?? "");
+        const latencyMs = typeof args.p_latency_ms === "number" ? Math.max(0, args.p_latency_ms) : null;
+
+        const profile = db.profiles.find(
+          (p) =>
+            p.id === userId &&
+            p.firm_id === firmId &&
+            ["owner", "partner", "staff"].includes(String(p.role)),
+        );
+        if (!profile) {
+          return {
+            data: { ok: false, code: "forbidden", error: "Caller profile is not an active writer in this firm." },
+            error: null,
+          };
+        }
+
+        const target = db.ai_usage_events.find(
+          (e) => e.id === args.p_event_id && e.firm_id === firmId && e.user_id === userId,
+        );
+        if (!target) {
+          return {
+            data: {
+              ok: false,
+              code: "not_found",
+              error: "Reserved AI usage event was not found for this caller and firm.",
+            },
+            error: null,
+          };
+        }
+        if (target.status !== "reserved") {
+          return {
+            data: { ok: false, code: "already_finalized", error: "AI usage event has already been finalized." },
+            error: null,
+          };
+        }
+
+        const now = nowFn();
+        const nowIso = now.toISOString();
+        const leaseCutoffIso = new Date(now.getTime() - 2 * 60_000).toISOString();
+        const leaseExpiresAt =
+          typeof target.lease_expires_at === "string"
+            ? target.lease_expires_at
+            : new Date(new Date(String(target.created_at)).getTime() + 2 * 60_000).toISOString();
+        const currentDayStart = istDayStartUtcIso(now);
+        const eventDayStart = istDayStartUtcIso(new Date(String(target.created_at)));
+
+        if (status === "ok" && (nowIso >= leaseExpiresAt || eventDayStart < currentDayStart)) {
+          const firmRow = (db.firms.find((f) => f.id === firmId) ?? actor.firm) as Firm;
+          const dailyQuota = dailyQuotaForPlan(firmRow);
+          const usedCurrentDay = db.ai_usage_events.filter(
+            (e) =>
+              e.firm_id === firmId &&
+              e.id !== target.id &&
+              String(e.created_at ?? "") >= currentDayStart &&
+              (e.status === "ok" || isReservedActive(e, nowIso, leaseCutoffIso)),
+          ).length;
+
+          const eventNextDayStart = istDayStartUtcIso(
+            new Date(new Date(eventDayStart).getTime() + 25 * 3600_000),
+          );
+          const usedEventDay =
+            eventDayStart < currentDayStart
+              ? db.ai_usage_events.filter(
+                  (e) =>
+                    e.firm_id === firmId &&
+                    e.id !== target.id &&
+                    String(e.created_at ?? "") >= eventDayStart &&
+                    String(e.created_at ?? "") < eventNextDayStart &&
+                    e.status === "ok",
+                ).length
+              : 0;
+
+          if (usedCurrentDay >= dailyQuota || (eventDayStart < currentDayStart && usedEventDay >= dailyQuota)) {
+            target.status = "aborted";
+            target.latency_ms = latencyMs;
+            target.lease_expires_at = null;
+            return {
+              data: {
+                ok: false,
+                code: "quota_exceeded_after_lease",
+                daily_quota: dailyQuota,
+                used_today: Math.max(usedCurrentDay, usedEventDay),
+                error: `Daily AI quota (${dailyQuota} requests/day) filled before this slow request completed. Please retry tomorrow IST.`,
+              },
+              error: null,
+            };
+          }
+
+          if (eventDayStart < currentDayStart) {
+            target.created_at = nowIso;
+          }
+        }
+
+        target.status = status;
+        target.latency_ms = latencyMs;
+        target.lease_expires_at = null;
+        return { data: { ok: true, status }, error: null };
+      }
+
+      if (fnName === "crmpro_confirm_ai_tasks") {
+        const key = String(args.p_idempotency_key ?? "").trim();
+        const relatedType = (args.p_related_type as string | null) ?? null;
+        const relatedId = (args.p_related_id as string | null) ?? null;
+        const tasks = Array.isArray(args.p_tasks) ? (args.p_tasks as Array<Record<string, unknown>>) : [];
+        const payloadHash = computeTaskBatchHash(relatedType, relatedId, tasks);
+
+        const existing = db.ai_task_batches.find(
+          (b) => b.firm_id === actor.firm.id && b.idempotency_key === key,
+        );
+        if (existing) {
+          if (existing.user_id !== actor.profile.id) {
+            return {
+              data: {
+                ok: false,
+                code: "idempotency_conflict",
+                error: "This idempotency key belongs to another staff member.",
+              },
+              error: null,
+            };
+          }
+          if (
+            (existing.related_type ?? null) !== relatedType ||
+            (existing.related_id ?? null) !== relatedId ||
+            existing.payload_hash !== payloadHash
+          ) {
+            return {
+              data: {
+                ok: false,
+                code: "idempotency_conflict",
+                error: "This idempotency key was already used with different task details.",
+              },
+              error: null,
+            };
+          }
+          return {
+            data: {
+              ok: true,
+              deduplicated: true,
+              created_ids: existing.created_activity_ids,
+            },
+            error: null,
+          };
+        }
+
+        if (relatedType && relatedId) {
+          const list = relatedType === "account" ? db.accounts : db.leads;
+          const found = list.find((r) => r.id === relatedId && r.firm_id === actor.firm.id);
+          if (!found) {
+            return {
+              data: { ok: false, code: "not_found", error: "Related client or lead was not found in this firm." },
+              error: null,
+            };
+          }
+        }
+
+        const allowedStaff = new Set(
+          db.profiles
+            .filter((p) => p.firm_id === actor.firm.id && ["owner", "partner", "staff"].includes(String(p.role)))
+            .map((p) => String(p.id)),
+        );
+
+        const stagedActivities: MockRow[] = [];
+        for (const task of tasks) {
+          const title = String(task.title ?? "").trim();
+          if (!title) {
+            return { data: null, error: { code: "22023", message: "Task title must be between 1 and 200 characters" } };
+          }
+          const dueDate = task.dueDate ? String(task.dueDate) : null;
+          const dueAt = dueDate ? new Date(`${dueDate}T18:00:00+05:30`).toISOString() : null;
+          const rawAssignee = task.assigneeId === null || task.assigneeId === undefined ? "" : String(task.assigneeId).trim();
+          let ownerId = actor.profile.id;
+          if (rawAssignee) {
+            if (!allowedStaff.has(rawAssignee)) {
+              return {
+                data: null,
+                error: { code: "22023", message: "Task assignee must be an active writer in this firm" },
+              };
+            }
+            ownerId = rawAssignee;
+          }
+          stagedActivities.push({
+            id: crypto.randomUUID(),
+            firm_id: actor.firm.id,
+            type: "task",
+            subject: title,
+            body: task.description ? String(task.description).trim() || null : null,
+            due_at: dueAt,
+            related_type: relatedType,
+            related_id: relatedId,
+            owner_id: ownerId,
+            created_at: nowFn().toISOString(),
+          });
+        }
+
+        db.activities.push(...stagedActivities);
+        const createdIds = stagedActivities.map((a) => String(a.id));
+        db.ai_task_batches.push({
+          id: crypto.randomUUID(),
+          firm_id: actor.firm.id,
+          user_id: actor.profile.id,
+          idempotency_key: key,
+          related_type: relatedType,
+          related_id: relatedId,
+          created_activity_ids: createdIds,
+          payload_hash: payloadHash,
+          created_at: nowFn().toISOString(),
+        });
+
+        return {
+          data: {
+            ok: true,
+            deduplicated: false,
+            created_ids: createdIds,
+          },
+          error: null,
+        };
+      }
+
+      return { data: null, error: { code: "42883", message: `Unknown mock RPC ${fnName}` } };
+    };
+  }
+
+  return {
+    db,
+    client: { from, rpc: createRpcExecutor("authenticated") } as unknown as Parameters<typeof runAiFeature>[0]["supabase"],
+    adminClient: { from, rpc: createRpcExecutor("service_role") } as unknown as Parameters<typeof runAiFeature>[0]["supabase"],
+  };
 }
 
 const FIRM_A: Firm = {
@@ -226,7 +666,7 @@ describe("AI Copilot roles, configuration, and prompt boundaries", () => {
     ).toBe(150);
   });
 
-  it("blocks execution when firm opt-in is disabled or GEMINI_API_KEY is missing", async () => {
+  it("blocks execution when firm opt-in is disabled or GEMINI_API_KEY or service credentials are missing", async () => {
     const mock = createMockSupabase({
       ai_firm_settings: [{ firm_id: FIRM_A.id, enabled: false, notice_accepted_at: null }],
     });
@@ -234,6 +674,7 @@ describe("AI Copilot roles, configuration, and prompt boundaries", () => {
 
     const disabledRes = await runAiFeature({
       supabase: mock.client,
+      adminSupabase: mock.adminClient,
       firm: FIRM_A,
       profile: PROFILE_STAFF,
       feature: "briefing",
@@ -247,6 +688,34 @@ describe("AI Copilot roles, configuration, and prompt boundaries", () => {
     if (!disabledRes.ok) expect(disabledRes.status).toBe(403);
     expect(generateSpy).not.toHaveBeenCalled();
 
+    // Missing service-role credentials fails closed (503) before reserving quota or calling Gemini
+    const prevServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    try {
+      const noServiceMock = createMockSupabase({
+        ai_firm_settings: [{ firm_id: FIRM_A.id, enabled: true, notice_accepted_at: "2026-11-22T00:00:00Z" }],
+      });
+      const noServiceRes = await runAiFeature({
+        supabase: noServiceMock.client,
+        firm: FIRM_A,
+        profile: PROFILE_STAFF,
+        feature: "briefing",
+        systemInstruction: "sys",
+        prompt: "prompt",
+        responseSchema: {} as never,
+        zodSchema: BriefingModelOutputSchema,
+        generateJson: generateSpy,
+      });
+      expect(noServiceRes.ok).toBe(false);
+      if (!noServiceRes.ok) expect(noServiceRes.status).toBe(503);
+      expect(generateSpy).not.toHaveBeenCalled();
+      expect(noServiceMock.db.ai_usage_events).toHaveLength(0);
+    } finally {
+      if (prevServiceRoleKey !== undefined) {
+        process.env.SUPABASE_SERVICE_ROLE_KEY = prevServiceRoleKey;
+      }
+    }
+
     delete process.env.GEMINI_API_KEY;
     expect(resolveAiConfig().configured).toBe(false);
 
@@ -255,6 +724,7 @@ describe("AI Copilot roles, configuration, and prompt boundaries", () => {
     });
     const noKeyRes = await runAiFeature({
       supabase: enabledMock.client,
+      adminSupabase: enabledMock.adminClient,
       firm: FIRM_A,
       profile: PROFILE_STAFF,
       feature: "briefing",
@@ -273,6 +743,7 @@ describe("AI Copilot roles, configuration, and prompt boundaries", () => {
     const mock = createMockSupabase({ missingTables: ["ai_firm_settings"] });
     const res = await runAiFeature({
       supabase: mock.client,
+      adminSupabase: mock.adminClient,
       firm: FIRM_A,
       profile: PROFILE_STAFF,
       feature: "briefing",
@@ -301,9 +772,11 @@ describe("AI Copilot roles, configuration, and prompt boundaries", () => {
     const burstMock = createMockSupabase({
       ai_firm_settings: [{ firm_id: FIRM_A.id, enabled: true, notice_accepted_at: "2026-11-22T00:00:00Z" }],
       ai_usage_events: recentUserEvents,
+      now: () => now,
     });
     const burstRes = await runAiFeature({
       supabase: burstMock.client,
+      adminSupabase: burstMock.adminClient,
       firm: FIRM_A,
       profile: PROFILE_STAFF,
       feature: "briefing",
@@ -328,9 +801,11 @@ describe("AI Copilot roles, configuration, and prompt boundaries", () => {
     const quotaMock = createMockSupabase({
       ai_firm_settings: [{ firm_id: FIRM_A.id, enabled: true, notice_accepted_at: "2026-11-22T00:00:00Z" }],
       ai_usage_events: starterEvents,
+      now: () => now,
     });
     const quotaRes = await runAiFeature({
       supabase: quotaMock.client,
+      adminSupabase: quotaMock.adminClient,
       firm: FIRM_A,
       profile: PROFILE_STAFF,
       feature: "briefing",
@@ -343,6 +818,230 @@ describe("AI Copilot roles, configuration, and prompt boundaries", () => {
     });
     expect(quotaRes.ok).toBe(false);
     if (!quotaRes.ok) expect(quotaRes.status).toBe(429);
+  });
+
+  it("reserves quota, blocks client finalization, enforces late-completion recheck after lease expiry, and fails closed on DB errors", async () => {
+    const now = new Date("2026-11-23T10:00:00+05:30");
+    // 22 completed today + 1 expired reserved (>2m old) => 3 remaining Starter slots
+    const initialEvents = [
+      ...Array.from({ length: 22 }, (_, idx) => ({
+        id: `done-${idx}`,
+        firm_id: FIRM_A.id,
+        user_id: PROFILE_PARTNER.id,
+        status: "ok",
+        created_at: new Date(now.getTime() - 3_600_000).toISOString(),
+      })),
+      {
+        id: "stale-lease-1",
+        firm_id: FIRM_A.id,
+        user_id: PROFILE_STAFF.id,
+        status: "reserved",
+        lease_expires_at: new Date(now.getTime() - 10_000).toISOString(),
+        created_at: new Date(now.getTime() - 130_000).toISOString(),
+      },
+    ];
+
+    const concurrentMock = createMockSupabase({
+      ai_firm_settings: [{ firm_id: FIRM_A.id, enabled: true, notice_accepted_at: "2026-11-22T00:00:00Z" }],
+      ai_usage_events: initialEvents,
+      now: () => now,
+    });
+
+    // Direct client attempt to finalize must fail with 42501
+    const clientFinalizeAttempt = await concurrentMock.client.rpc("crmpro_finalize_ai_usage", {
+      p_event_id: "stale-lease-1",
+      p_firm_id: FIRM_A.id,
+      p_user_id: PROFILE_STAFF.id,
+      p_status: "aborted",
+      p_latency_ms: 5,
+    });
+    expect(clientFinalizeAttempt.error?.code).toBe("42501");
+
+    const generateSpy = vi.fn(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      return JSON.stringify({
+        overviewSummary: "Active client.",
+        overviewFacts: [],
+        recentActivity: [],
+        openDeals: [],
+        outstandingCommitments: [],
+        suggestedNextActions: [],
+        missingInformation: [],
+      });
+    });
+
+    const parallelResults = await Promise.all(
+      Array.from({ length: 6 }, () =>
+        runAiFeature({
+          supabase: concurrentMock.client,
+          adminSupabase: concurrentMock.adminClient,
+          firm: FIRM_A,
+          profile: PROFILE_STAFF,
+          feature: "briefing",
+          systemInstruction: "sys",
+          prompt: "prompt",
+          responseSchema: {} as never,
+          zodSchema: BriefingModelOutputSchema,
+          generateJson: generateSpy,
+          now,
+        }),
+      ),
+    );
+
+    expect(parallelResults.filter((r) => r.ok)).toHaveLength(3);
+    expect(parallelResults.filter((r) => !r.ok && r.status === 429)).toHaveLength(3);
+    expect(generateSpy).toHaveBeenCalledTimes(3);
+
+    // Late provider completion after 2-minute lease expired when quota filled returns 429 and marks 'aborted'
+    let currentClock = new Date("2026-11-23T10:00:00+05:30");
+    const lateMock = createMockSupabase({
+      ai_firm_settings: [{ firm_id: FIRM_A.id, enabled: true, notice_accepted_at: "2026-11-22T00:00:00Z" }],
+      ai_usage_events: Array.from({ length: 24 }, (_, idx) => ({
+        id: `late-seed-${idx}`,
+        firm_id: FIRM_A.id,
+        user_id: PROFILE_PARTNER.id,
+        status: "ok",
+        created_at: new Date(currentClock.getTime() - 3_600_000).toISOString(),
+      })),
+      now: () => currentClock,
+    });
+    const slowRes = await runAiFeature({
+      supabase: lateMock.client,
+      adminSupabase: lateMock.adminClient,
+      firm: FIRM_A,
+      profile: PROFILE_STAFF,
+      feature: "briefing",
+      systemInstruction: "sys",
+      prompt: "prompt",
+      responseSchema: {} as never,
+      zodSchema: BriefingModelOutputSchema,
+      generateJson: async () => {
+        // Advance clock past 2-minute lease while Partner fills the 25th slot
+        currentClock = new Date(currentClock.getTime() + 130_000);
+        lateMock.db.ai_usage_events.push({
+          id: "partner-25th-slot",
+          firm_id: FIRM_A.id,
+          user_id: PROFILE_PARTNER.id,
+          status: "ok",
+          created_at: new Date(currentClock.getTime() - 5_000).toISOString(),
+        });
+        return JSON.stringify({
+          overviewSummary: "Slow completion.",
+          overviewFacts: [],
+          recentActivity: [],
+          openDeals: [],
+          outstandingCommitments: [],
+          suggestedNextActions: [],
+          missingInformation: [],
+        });
+      },
+      now: currentClock,
+    });
+    expect(slowRes.ok).toBe(false);
+    if (!slowRes.ok) expect(slowRes.status).toBe(429);
+    expect(lateMock.db.ai_usage_events.filter((e) => e.status === "ok")).toHaveLength(25);
+    expect(lateMock.db.ai_usage_events.some((e) => e.user_id === PROFILE_STAFF.id && e.status === "aborted")).toBe(true);
+
+    // Explicit DB error on reservation RPC fails closed (503) and never invokes Gemini
+    const reserveErrMock = createMockSupabase({
+      ai_firm_settings: [{ firm_id: FIRM_A.id, enabled: true, notice_accepted_at: "2026-11-22T00:00:00Z" }],
+      rpcErrors: { crmpro_reserve_ai_quota: { code: "XX000", message: "connection pool exhausted" } },
+    });
+    const reserveFailSpy = vi.fn();
+    const reserveErrRes = await runAiFeature({
+      supabase: reserveErrMock.client,
+      adminSupabase: reserveErrMock.adminClient,
+      firm: FIRM_A,
+      profile: PROFILE_STAFF,
+      feature: "briefing",
+      systemInstruction: "sys",
+      prompt: "prompt",
+      responseSchema: {} as never,
+      zodSchema: BriefingModelOutputSchema,
+      generateJson: reserveFailSpy,
+    });
+    expect(reserveErrRes.ok).toBe(false);
+    if (!reserveErrRes.ok) expect(reserveErrRes.status).toBe(503);
+    expect(reserveFailSpy).not.toHaveBeenCalled();
+
+    // Explicit DB error on finalize RPC fails closed (503)
+    const finalizeErrMock = createMockSupabase({
+      ai_firm_settings: [{ firm_id: FIRM_A.id, enabled: true, notice_accepted_at: "2026-11-22T00:00:00Z" }],
+      rpcErrors: { crmpro_finalize_ai_usage: { code: "XX000", message: "write failed" } },
+    });
+    const finalizeErrRes = await runAiFeature({
+      supabase: finalizeErrMock.client,
+      adminSupabase: finalizeErrMock.adminClient,
+      firm: FIRM_A,
+      profile: PROFILE_STAFF,
+      feature: "briefing",
+      systemInstruction: "sys",
+      prompt: "prompt",
+      responseSchema: {} as never,
+      zodSchema: BriefingModelOutputSchema,
+      generateJson: generateSpy,
+      now,
+    });
+    expect(finalizeErrRes.ok).toBe(false);
+    if (!finalizeErrRes.ok) expect(finalizeErrRes.status).toBe(503);
+
+    // Provider error releases daily quota slot while still counting toward the user's 10-minute burst log
+    const failureMock = createMockSupabase({
+      ai_firm_settings: [{ firm_id: FIRM_A.id, enabled: true, notice_accepted_at: "2026-11-22T00:00:00Z" }],
+      ai_usage_events: Array.from({ length: 24 }, (_, idx) => ({
+        id: `d-${idx}`,
+        firm_id: FIRM_A.id,
+        user_id: PROFILE_PARTNER.id,
+        status: "ok",
+        created_at: new Date(now.getTime() - 3_600_000).toISOString(),
+      })),
+      now: () => now,
+    });
+    const badJsonRes = await runAiFeature({
+      supabase: failureMock.client,
+      adminSupabase: failureMock.adminClient,
+      firm: FIRM_A,
+      profile: PROFILE_STAFF,
+      feature: "briefing",
+      systemInstruction: "sys",
+      prompt: "prompt",
+      responseSchema: {} as never,
+      zodSchema: BriefingModelOutputSchema,
+      generateJson: async () => "not-json",
+      now,
+    });
+    expect(badJsonRes.ok).toBe(false);
+    if (!badJsonRes.ok) expect(badJsonRes.status).toBe(502);
+    // 25th daily slot was released back to the firm for Partner
+    const partnerMock = createMockSupabase({
+      ai_firm_settings: failureMock.db.ai_firm_settings,
+      ai_usage_events: failureMock.db.ai_usage_events,
+      actor: { firm: FIRM_A, profile: PROFILE_PARTNER },
+      now: () => now,
+    });
+    const partnerRetry = await runAiFeature({
+      supabase: partnerMock.client,
+      adminSupabase: partnerMock.adminClient,
+      firm: FIRM_A,
+      profile: PROFILE_PARTNER,
+      feature: "briefing",
+      systemInstruction: "sys",
+      prompt: "prompt",
+      responseSchema: {} as never,
+      zodSchema: BriefingModelOutputSchema,
+      generateJson: generateSpy,
+      now,
+    });
+    expect(partnerRetry.ok).toBe(true);
+
+    // Explicit DB error in getFirmAiStatus surfaces statusError rather than silently returning clean zero usage
+    const statusErrMock = createMockSupabase({
+      ai_firm_settings: [{ firm_id: FIRM_A.id, enabled: true, notice_accepted_at: "2026-11-22T00:00:00Z" }],
+      tableErrors: { ai_usage_events: { code: "XX000", message: "db timeout" } },
+    });
+    const status = await getFirmAiStatus(statusErrMock.client, FIRM_A, now);
+    expect(status.statusError).toBe("db timeout");
+    expect(status.enabled).toBe(false);
   });
 
   it("retries once on transient 503 and strips untrusted delimiter breakouts", async () => {
@@ -359,6 +1058,7 @@ describe("AI Copilot roles, configuration, and prompt boundaries", () => {
     let attempts = 0;
     const res = await runAiFeature({
       supabase: mock.client,
+      adminSupabase: mock.adminClient,
       firm: FIRM_A,
       profile: PROFILE_STAFF,
       feature: "briefing",
@@ -425,7 +1125,7 @@ describe("AI Copilot features: Briefing, Follow-up, and Idempotent Notes-to-Task
     });
 
     const idor = await generateCustomerBriefing(
-      { supabase: mock.client, firm: FIRM_A, profile: PROFILE_STAFF, generateJson: vi.fn() },
+      { supabase: mock.client, adminSupabase: mock.adminClient, firm: FIRM_A, profile: PROFILE_STAFF, generateJson: vi.fn() },
       ACCOUNT_B,
     );
     expect(idor.ok).toBe(false);
@@ -434,6 +1134,7 @@ describe("AI Copilot features: Briefing, Follow-up, and Idempotent Notes-to-Task
     const ok = await generateCustomerBriefing(
       {
         supabase: mock.client,
+        adminSupabase: mock.adminClient,
         firm: FIRM_A,
         profile: PROFILE_STAFF,
         generateJson: async () =>
@@ -479,6 +1180,7 @@ describe("AI Copilot features: Briefing, Follow-up, and Idempotent Notes-to-Task
     const tamil = await generateFollowUpDraft(
       {
         supabase: mock.client,
+        adminSupabase: mock.adminClient,
         firm: FIRM_A,
         profile: PROFILE_STAFF,
         generateJson: async () =>
@@ -524,7 +1226,7 @@ describe("AI Copilot features: Briefing, Follow-up, and Idempotent Notes-to-Task
     }, sources).overview).toBeNull();
   });
 
-  it("grounds staff assignees, flags ambiguous dates/owners, and confirms tasks idempotently", async () => {
+  it("grounds staff assignees, confirms tasks idempotently, rejects conflicts (409) and invalid assignees (400)", async () => {
     const staffList = [
       { id: PROFILE_STAFF.id, full_name: "Karthik N", role: "staff" },
       { id: PROFILE_PARTNER.id, full_name: "Priya Subramanian", role: "partner" },
@@ -566,12 +1268,14 @@ describe("AI Copilot features: Briefing, Follow-up, and Idempotent Notes-to-Task
       profiles: [
         { id: PROFILE_STAFF.id, firm_id: FIRM_A.id, full_name: "Karthik N", role: "staff" },
         { id: PROFILE_PARTNER.id, firm_id: FIRM_A.id, full_name: "Priya Subramanian", role: "partner" },
+        { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", firm_id: FIRM_A.id, full_name: "Readonly User", role: "readonly" },
       ],
     });
 
     const extractRes = await extractTasksFromNotes(
       {
         supabase: mock.client,
+        adminSupabase: mock.adminClient,
         firm: FIRM_A,
         profile: PROFILE_STAFF,
         now: new Date("2026-11-23T09:00:00+05:30"),
@@ -615,14 +1319,15 @@ describe("AI Copilot features: Briefing, Follow-up, and Idempotent Notes-to-Task
       ],
     };
 
-    const firstConfirm = await confirmProposedTasks(
-      { supabase: mock.client, firm: FIRM_A, profile: PROFILE_STAFF },
-      batchPayload,
-    );
+    const [firstConfirm, parallelConfirm] = await Promise.all([
+      confirmProposedTasks({ supabase: mock.client, firm: FIRM_A, profile: PROFILE_STAFF }, batchPayload),
+      confirmProposedTasks({ supabase: mock.client, firm: FIRM_A, profile: PROFILE_STAFF }, batchPayload),
+    ]);
     expect(firstConfirm.ok).toBe(true);
-    if (firstConfirm.ok) {
-      expect(firstConfirm.body.deduplicated).toBe(false);
-      expect(firstConfirm.body.createdIds).toHaveLength(1);
+    expect(parallelConfirm.ok).toBe(true);
+    if (firstConfirm.ok && parallelConfirm.ok) {
+      expect([firstConfirm.body.deduplicated, parallelConfirm.body.deduplicated].sort()).toEqual([false, true]);
+      expect(firstConfirm.body.createdIds).toEqual(parallelConfirm.body.createdIds);
     }
     expect(mock.db.activities).toHaveLength(1);
     expect(mock.db.activities[0].type).toBe("task");
@@ -639,5 +1344,77 @@ describe("AI Copilot features: Briefing, Follow-up, and Idempotent Notes-to-Task
       expect(retryConfirm.body.createdIds).toHaveLength(1);
     }
     expect(mock.db.activities).toHaveLength(1);
+
+    // Reusing key with modified task payload returns 409 conflict
+    const conflictPayloadRes = await confirmProposedTasks(
+      { supabase: mock.client, firm: FIRM_A, profile: PROFILE_STAFF },
+      {
+        ...batchPayload,
+        tasks: [
+          {
+            title: "Different tampered task",
+            description: "Request PDF from client",
+            assigneeId: PROFILE_PARTNER.id,
+            dueDate: "2026-11-24",
+          },
+        ],
+      },
+    );
+    expect(conflictPayloadRes.ok).toBe(false);
+    expect(conflictPayloadRes.status).toBe(409);
+
+    // Different staff user reusing same key with identical payload returns 409 conflict
+    const partnerSameDbMock = createMockSupabase({
+      ai_firm_settings: mock.db.ai_firm_settings,
+      accounts: mock.db.accounts,
+      profiles: mock.db.profiles,
+      ai_task_batches: mock.db.ai_task_batches,
+      activities: mock.db.activities,
+      actor: { firm: FIRM_A, profile: PROFILE_PARTNER },
+    });
+    const conflictCallerRes = await confirmProposedTasks(
+      { supabase: partnerSameDbMock.client, firm: FIRM_A, profile: PROFILE_PARTNER },
+      batchPayload,
+    );
+    expect(conflictCallerRes.ok).toBe(false);
+    expect(conflictCallerRes.status).toBe(409);
+
+    // Cross-firm or readonly assignee is rejected explicitly (400) instead of falling back to caller
+    const badAssigneeRes = await confirmProposedTasks(
+      { supabase: mock.client, firm: FIRM_A, profile: PROFILE_STAFF },
+      {
+        idempotencyKey: "batch-invalid-assignee-key",
+        relatedType: "account",
+        relatedId: ACCOUNT_A,
+        tasks: [
+          {
+            title: "Valid first task",
+            description: "",
+            assigneeId: PROFILE_PARTNER.id,
+            dueDate: "2026-11-24",
+          },
+          {
+            title: "Readonly second task",
+            description: "",
+            assigneeId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            dueDate: "2026-11-24",
+          },
+        ],
+      },
+    );
+    expect(badAssigneeRes.ok).toBe(false);
+    expect(badAssigneeRes.status).toBe(400);
+    expect(mock.db.activities).toHaveLength(1);
+
+    // Read errors in briefing/notes-to-tasks fail closed explicitly instead of returning 404/empty context
+    const readErrorMock = createMockSupabase({
+      tableErrors: { accounts: { code: "XX000", message: "read error" } },
+    });
+    const briefingDbErr = await generateCustomerBriefing(
+      { supabase: readErrorMock.client, adminSupabase: readErrorMock.adminClient, firm: FIRM_A, profile: PROFILE_STAFF },
+      ACCOUNT_A,
+    );
+    expect(briefingDbErr.ok).toBe(false);
+    expect(briefingDbErr.status).toBe(503);
   });
 });

@@ -1,5 +1,5 @@
 import { GoogleGenAI, ThinkingLevel, type Schema } from "@google/genai";
-import type { z } from "zod";
+import { z } from "zod";
 import {
   AI_LIMITS,
   AI_USER_WINDOW_LIMIT,
@@ -12,6 +12,9 @@ import {
 import type { CrmSupabaseClient, Firm, Profile } from "@/lib/auth-routing";
 import { todayIsoInIst } from "@/lib/format";
 import { getSession } from "@/lib/session";
+import { createAdmin } from "@/lib/supabase/admin";
+
+export const AI_RESERVATION_LEASE_MINUTES = 2;
 
 export type AiFirmStatus = {
   schemaReady: boolean;
@@ -21,6 +24,7 @@ export type AiFirmStatus = {
   noticeAcceptedAt: string | null;
   dailyQuota: number;
   usedToday: number;
+  statusError?: string | null;
 };
 
 export type AiCaller =
@@ -47,6 +51,28 @@ export type GenerateJsonParams = {
 
 export type GenerateJsonFn = (params: GenerateJsonParams) => Promise<string>;
 
+const ReservationResponseSchema = z.object({
+  allowed: z.boolean(),
+  code: z.string(),
+  event_id: z.string().uuid().optional(),
+  lease_expires_at: z.string().optional(),
+  daily_quota: z.number().optional(),
+  used_today: z.number().optional(),
+  burst_limit: z.number().optional(),
+  burst_used: z.number().optional(),
+  window_minutes: z.number().optional(),
+  error: z.string().optional(),
+});
+
+const FinalizeResponseSchema = z.object({
+  ok: z.boolean(),
+  code: z.string().optional(),
+  error: z.string().optional(),
+  status: z.string().optional(),
+  daily_quota: z.number().optional(),
+  used_today: z.number().optional(),
+});
+
 export function isMissingTableError(error: { code?: string; message?: string } | null | undefined): boolean {
   if (!error) return false;
   return (
@@ -54,6 +80,24 @@ export function isMissingTableError(error: { code?: string; message?: string } |
     error.code === "PGRST205" ||
     /relation .* does not exist|could not find the table/i.test(error.message ?? "")
   );
+}
+
+export function isMissingRpcError(error: { code?: string; message?: string } | null | undefined): boolean {
+  if (!error) return false;
+  return (
+    error.code === "42883" ||
+    error.code === "PGRST202" ||
+    /could not find the function|function .* does not exist/i.test(error.message ?? "")
+  );
+}
+
+export function isMissingColumnError(error: { code?: string; message?: string } | null | undefined): boolean {
+  if (!error) return false;
+  return error.code === "42703" || /column .* does not exist/i.test(error.message ?? "");
+}
+
+export function isProvisioningMissingError(error: { code?: string; message?: string } | null | undefined): boolean {
+  return isMissingTableError(error) || isMissingRpcError(error) || isMissingColumnError(error);
 }
 
 export function istDayStartUtcIso(now = new Date()): string {
@@ -98,34 +142,75 @@ export async function getFirmAiStatus(supabase: CrmSupabaseClient, firm: Firm, n
     .eq("firm_id", firm.id)
     .maybeSingle();
 
-  if (settingsRes.error && isMissingTableError(settingsRes.error)) {
+  if (settingsRes.error) {
+    if (isProvisioningMissingError(settingsRes.error)) {
+      return {
+        schemaReady: false,
+        providerConfigured: config.configured,
+        model: config.model,
+        enabled: false,
+        noticeAcceptedAt: null,
+        dailyQuota,
+        usedToday: 0,
+      };
+    }
     return {
-      schemaReady: false,
+      schemaReady: true,
       providerConfigured: config.configured,
       model: config.model,
       enabled: false,
       noticeAcceptedAt: null,
       dailyQuota,
       usedToday: 0,
+      statusError: settingsRes.error.message || "Unable to load firm AI settings.",
     };
   }
 
+  const nowIso = now.toISOString();
   const dayStart = istDayStartUtcIso(now);
+  const leaseCutoffIso = new Date(now.getTime() - AI_RESERVATION_LEASE_MINUTES * 60_000).toISOString();
   const usageRes = await supabase
     .from("ai_usage_events")
     .select("id", { count: "exact", head: true })
     .eq("firm_id", firm.id)
-    .eq("status", "ok")
-    .gte("created_at", dayStart);
+    .gte("created_at", dayStart)
+    .or(
+      `status.eq.ok,and(status.eq.reserved,lease_expires_at.gt.${nowIso}),and(status.eq.reserved,lease_expires_at.is.null,created_at.gte.${leaseCutoffIso})`,
+    );
+
+  if (usageRes.error) {
+    if (isProvisioningMissingError(usageRes.error)) {
+      return {
+        schemaReady: false,
+        providerConfigured: config.configured,
+        model: config.model,
+        enabled: false,
+        noticeAcceptedAt: settingsRes.data?.notice_accepted_at ?? null,
+        dailyQuota,
+        usedToday: 0,
+      };
+    }
+    return {
+      schemaReady: true,
+      providerConfigured: config.configured,
+      model: config.model,
+      enabled: false,
+      noticeAcceptedAt: settingsRes.data?.notice_accepted_at ?? null,
+      dailyQuota,
+      usedToday: 0,
+      statusError: usageRes.error.message || "Unable to verify today's AI usage quota.",
+    };
+  }
 
   return {
-    schemaReady: !(usageRes.error && isMissingTableError(usageRes.error)),
+    schemaReady: true,
     providerConfigured: config.configured,
     model: config.model,
     enabled: Boolean(settingsRes.data?.enabled && settingsRes.data?.notice_accepted_at),
     noticeAcceptedAt: settingsRes.data?.notice_accepted_at ?? null,
     dailyQuota,
     usedToday: usageRes.count ?? 0,
+    statusError: null,
   };
 }
 
@@ -174,29 +259,57 @@ export async function defaultGeminiGenerateJson(params: GenerateJsonParams): Pro
   return response.text;
 }
 
-async function logUsageEvent(
-  supabase: CrmSupabaseClient,
-  event: {
+async function finalizeAiUsage(
+  adminSupabase: CrmSupabaseClient,
+  params: {
+    eventId: string;
     firmId: string;
     userId: string;
-    feature: AiFeature;
-    requestId: string;
-    status: "ok" | "rate_limited" | "provider_error" | "validation_error";
-    modelId: string;
-    inputChars: number;
+    status: "ok" | "provider_error" | "validation_error" | "aborted";
     latencyMs: number | null;
   },
-) {
-  await supabase.from("ai_usage_events").insert({
-    firm_id: event.firmId,
-    user_id: event.userId,
-    feature: event.feature,
-    request_id: event.requestId,
-    status: event.status,
-    model_id: event.modelId,
-    input_chars: Math.max(0, Math.round(event.inputChars)),
-    latency_ms: event.latencyMs,
+): Promise<{ ok: boolean; statusCode?: number; error?: string }> {
+  const { data, error } = await adminSupabase.rpc("crmpro_finalize_ai_usage", {
+    p_event_id: params.eventId,
+    p_firm_id: params.firmId,
+    p_user_id: params.userId,
+    p_status: params.status,
+    p_latency_ms: params.latencyMs === null ? null : Math.max(0, Math.round(params.latencyMs)),
   });
+
+  if (error) {
+    return {
+      ok: false,
+      statusCode: 503,
+      error: isProvisioningMissingError(error)
+        ? "AI Copilot database tables or server accounting RPCs are not provisioned yet. Apply the latest Supabase migration."
+        : error.message || "Failed to finalize AI usage event.",
+    };
+  }
+
+  const parsed = FinalizeResponseSchema.safeParse(data);
+  if (!parsed.success) {
+    return { ok: false, statusCode: 503, error: "Unexpected accounting finalization response from database." };
+  }
+
+  if (!parsed.data.ok) {
+    if (parsed.data.code === "quota_exceeded_after_lease") {
+      return {
+        ok: false,
+        statusCode: 429,
+        error:
+          parsed.data.error ??
+          "Daily AI quota filled before this slow request completed. Please retry tomorrow IST.",
+      };
+    }
+    return {
+      ok: false,
+      statusCode: 503,
+      error: parsed.data.error ?? "AI usage reservation could not be finalized.",
+    };
+  }
+
+  return { ok: true };
 }
 
 export type RunAiResult<T> =
@@ -205,6 +318,7 @@ export type RunAiResult<T> =
 
 export async function runAiFeature<TSchema extends z.ZodTypeAny>(options: {
   supabase: CrmSupabaseClient;
+  adminSupabase?: CrmSupabaseClient;
   firm: Firm;
   profile: Profile;
   feature: AiFeature;
@@ -217,32 +331,7 @@ export async function runAiFeature<TSchema extends z.ZodTypeAny>(options: {
   now?: Date;
 }): Promise<RunAiResult<z.infer<TSchema>>> {
   const requestId = crypto.randomUUID();
-  const now = options.now ?? new Date();
   const config = resolveAiConfig();
-
-  const settingsRes = await options.supabase
-    .from("ai_firm_settings")
-    .select("enabled, notice_accepted_at")
-    .eq("firm_id", options.firm.id)
-    .maybeSingle();
-
-  if (settingsRes.error && isMissingTableError(settingsRes.error)) {
-    return {
-      ok: false,
-      requestId,
-      status: 503,
-      error: "AI Copilot database tables are not provisioned yet. Apply the latest Supabase migration.",
-    };
-  }
-
-  if (!settingsRes.data?.enabled || !settingsRes.data?.notice_accepted_at) {
-    return {
-      ok: false,
-      requestId,
-      status: 403,
-      error: "AI Copilot is disabled for this firm. An owner or partner can enable it in Settings.",
-    };
-  }
 
   if (!config.configured || !config.apiKey) {
     return {
@@ -253,63 +342,113 @@ export async function runAiFeature<TSchema extends z.ZodTypeAny>(options: {
     };
   }
 
-  const dailyQuota = dailyQuotaForPlan(options.firm);
-  const dayStartIso = istDayStartUtcIso(now);
-  const windowStartIso = new Date(now.getTime() - AI_USER_WINDOW_MINUTES * 60_000).toISOString();
-
-  const [firmUsageRes, userWindowRes] = await Promise.all([
-    options.supabase
-      .from("ai_usage_events")
-      .select("id", { count: "exact", head: true })
-      .eq("firm_id", options.firm.id)
-      .eq("status", "ok")
-      .gte("created_at", dayStartIso),
-    options.supabase
-      .from("ai_usage_events")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", options.profile.id)
-      .eq("status", "ok")
-      .gte("created_at", windowStartIso),
-  ]);
-
-  if ((firmUsageRes.count ?? 0) >= dailyQuota) {
-    await logUsageEvent(options.supabase, {
-      firmId: options.firm.id,
-      userId: options.profile.id,
-      feature: options.feature,
-      requestId,
-      status: "rate_limited",
-      modelId: config.model,
-      inputChars: options.prompt.length,
-      latencyMs: null,
-    });
+  let adminSupabase: CrmSupabaseClient;
+  try {
+    adminSupabase = options.adminSupabase ?? (createAdmin() as unknown as CrmSupabaseClient);
+  } catch {
     return {
       ok: false,
       requestId,
-      status: 429,
-      error: `Daily AI quota reached (${dailyQuota} requests/day on your current plan). Try again tomorrow IST.`,
+      status: 503,
+      error: "AI usage accounting is unavailable because server Supabase service credentials are not configured.",
     };
   }
 
-  if ((userWindowRes.count ?? 0) >= AI_USER_WINDOW_LIMIT) {
-    await logUsageEvent(options.supabase, {
-      firmId: options.firm.id,
-      userId: options.profile.id,
-      feature: options.feature,
-      requestId,
-      status: "rate_limited",
-      modelId: config.model,
-      inputChars: options.prompt.length,
-      latencyMs: null,
-    });
+  const reserveRes = await options.supabase.rpc("crmpro_reserve_ai_quota", {
+    p_feature: options.feature,
+    p_request_id: requestId,
+    p_model_id: config.model,
+    p_input_chars: Math.max(0, Math.round(options.prompt.length)),
+  });
+
+  if (reserveRes.error) {
+    if (isProvisioningMissingError(reserveRes.error)) {
+      return {
+        ok: false,
+        requestId,
+        status: 503,
+        error: "AI Copilot database tables or atomic quota RPCs are not provisioned yet. Apply the latest Supabase migration.",
+      };
+    }
     return {
       ok: false,
       requestId,
-      status: 429,
-      error: `Rate limit reached (${AI_USER_WINDOW_LIMIT} requests per ${AI_USER_WINDOW_MINUTES} minutes). Wait a moment and retry.`,
+      status: 503,
+      error: "Unable to verify AI quota in the database. Please retry in a moment.",
     };
   }
 
+  const parsedReservation = ReservationResponseSchema.safeParse(reserveRes.data);
+  if (!parsedReservation.success) {
+    return {
+      ok: false,
+      requestId,
+      status: 503,
+      error: "Unexpected quota reservation response from database.",
+    };
+  }
+
+  const reservation = parsedReservation.data;
+  if (!reservation.allowed) {
+    if (reservation.code === "unauthorized") {
+      return {
+        ok: false,
+        requestId,
+        status: 401,
+        error: reservation.error ?? "Sign in to use AI Copilot.",
+      };
+    }
+    if (reservation.code === "forbidden" || reservation.code === "disabled") {
+      return {
+        ok: false,
+        requestId,
+        status: 403,
+        error:
+          reservation.error ??
+          "AI Copilot is disabled for this firm. An owner or partner can enable it in Settings.",
+      };
+    }
+    if (reservation.code === "daily_quota_exceeded") {
+      const limit = reservation.daily_quota ?? dailyQuotaForPlan(options.firm);
+      return {
+        ok: false,
+        requestId,
+        status: 429,
+        error:
+          reservation.error ??
+          `Daily AI quota reached (${limit} requests/day on your current plan). Try again tomorrow IST.`,
+      };
+    }
+    if (reservation.code === "burst_limit_exceeded") {
+      const limit = reservation.burst_limit ?? AI_USER_WINDOW_LIMIT;
+      const windowMinutes = reservation.window_minutes ?? AI_USER_WINDOW_MINUTES;
+      return {
+        ok: false,
+        requestId,
+        status: 429,
+        error:
+          reservation.error ??
+          `Rate limit reached (${limit} requests per ${windowMinutes} minutes). Wait a moment and retry.`,
+      };
+    }
+    return {
+      ok: false,
+      requestId,
+      status: 503,
+      error: reservation.error ?? "Unable to reserve AI quota.",
+    };
+  }
+
+  if (!reservation.event_id) {
+    return {
+      ok: false,
+      requestId,
+      status: 503,
+      error: "Database quota reservation did not return an event identifier.",
+    };
+  }
+
+  const eventId = reservation.event_id;
   const generate = options.generateJson ?? defaultGeminiGenerateJson;
   const startedAt = Date.now();
   let rawText: string | null = null;
@@ -317,6 +456,13 @@ export async function runAiFeature<TSchema extends z.ZodTypeAny>(options: {
 
   for (let attempt = 0; attempt <= AI_LIMITS.maxRetries; attempt++) {
     if (options.requestSignal?.aborted) {
+      await finalizeAiUsage(adminSupabase, {
+        eventId,
+        firmId: options.firm.id,
+        userId: options.profile.id,
+        status: "aborted",
+        latencyMs: Date.now() - startedAt,
+      });
       return { ok: false, requestId, status: 499, error: "Request cancelled." };
     }
 
@@ -343,6 +489,13 @@ export async function runAiFeature<TSchema extends z.ZodTypeAny>(options: {
       options.requestSignal?.removeEventListener("abort", onParentAbort);
       lastError = error;
       if (options.requestSignal?.aborted) {
+        await finalizeAiUsage(adminSupabase, {
+          eventId,
+          firmId: options.firm.id,
+          userId: options.profile.id,
+          status: "aborted",
+          latencyMs: Date.now() - startedAt,
+        });
         return { ok: false, requestId, status: 499, error: "Request cancelled." };
       }
       if (attempt < AI_LIMITS.maxRetries && isTransientProviderError(error)) {
@@ -356,14 +509,11 @@ export async function runAiFeature<TSchema extends z.ZodTypeAny>(options: {
   const latencyMs = Date.now() - startedAt;
 
   if (lastError || rawText === null) {
-    await logUsageEvent(options.supabase, {
+    await finalizeAiUsage(adminSupabase, {
+      eventId,
       firmId: options.firm.id,
       userId: options.profile.id,
-      feature: options.feature,
-      requestId,
       status: "provider_error",
-      modelId: config.model,
-      inputChars: options.prompt.length,
       latencyMs,
     });
     return {
@@ -378,14 +528,11 @@ export async function runAiFeature<TSchema extends z.ZodTypeAny>(options: {
   try {
     parsedJson = JSON.parse(rawText);
   } catch {
-    await logUsageEvent(options.supabase, {
+    await finalizeAiUsage(adminSupabase, {
+      eventId,
       firmId: options.firm.id,
       userId: options.profile.id,
-      feature: options.feature,
-      requestId,
       status: "validation_error",
-      modelId: config.model,
-      inputChars: options.prompt.length,
       latencyMs,
     });
     return {
@@ -398,14 +545,11 @@ export async function runAiFeature<TSchema extends z.ZodTypeAny>(options: {
 
   const validated = options.zodSchema.safeParse(parsedJson);
   if (!validated.success) {
-    await logUsageEvent(options.supabase, {
+    await finalizeAiUsage(adminSupabase, {
+      eventId,
       firmId: options.firm.id,
       userId: options.profile.id,
-      feature: options.feature,
-      requestId,
       status: "validation_error",
-      modelId: config.model,
-      inputChars: options.prompt.length,
       latencyMs,
     });
     return {
@@ -416,16 +560,21 @@ export async function runAiFeature<TSchema extends z.ZodTypeAny>(options: {
     };
   }
 
-  await logUsageEvent(options.supabase, {
+  const finalized = await finalizeAiUsage(adminSupabase, {
+    eventId,
     firmId: options.firm.id,
     userId: options.profile.id,
-    feature: options.feature,
-    requestId,
     status: "ok",
-    modelId: config.model,
-    inputChars: options.prompt.length,
     latencyMs,
   });
+  if (!finalized.ok) {
+    return {
+      ok: false,
+      requestId,
+      status: finalized.statusCode ?? 503,
+      error: finalized.error ?? "Could not finalize AI usage accounting in the database. Please retry.",
+    };
+  }
 
   return {
     ok: true,

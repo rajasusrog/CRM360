@@ -9,7 +9,7 @@ import {
   type GroundedProposedTask,
   type StaffMember,
 } from "@/lib/ai/grounding";
-import { isMissingTableError, runAiFeature, type GenerateJsonFn } from "@/lib/ai/gateway";
+import { isMissingTableError, isProvisioningMissingError, runAiFeature, type GenerateJsonFn } from "@/lib/ai/gateway";
 import {
   BRIEFING_RESPONSE_SCHEMA,
   BRIEFING_SYSTEM_INSTRUCTION,
@@ -33,10 +33,27 @@ import {
 } from "@/lib/ai/schemas";
 import type { CrmSupabaseClient, Firm, Profile } from "@/lib/auth-routing";
 import { todayIsoInIst } from "@/lib/format";
-import type { z } from "zod";
+import { z } from "zod";
+
+const ConfirmTasksRpcResponseSchema = z.object({
+  ok: z.boolean(),
+  code: z.string().optional(),
+  error: z.string().optional(),
+  deduplicated: z.boolean().optional(),
+  created_ids: z.array(z.string()).optional(),
+});
+
+function dbReadFailure(context: string): { ok: false; status: 503; error: string } {
+  return {
+    ok: false,
+    status: 503,
+    error: `Could not load ${context} from the database. Please retry in a moment.`,
+  };
+}
 
 export type AiServiceContext = {
   supabase: CrmSupabaseClient;
+  adminSupabase?: CrmSupabaseClient;
   firm: Firm;
   profile: Profile;
   signal?: AbortSignal;
@@ -60,7 +77,7 @@ export async function generateCustomerBriefing(
     briefing: GroundedBriefing;
   }>
 > {
-  const { data: account } = await ctx.supabase
+  const { data: account, error: accountError } = await ctx.supabase
     .from("accounts")
     .select(
       "id, firm_id, name, entity_type, gst_filing_frequency, state_code, requires_audit, email, phone, city, assigned_staff_id, status, portal_enabled, consent_data_processing, notes, created_at",
@@ -68,6 +85,10 @@ export async function generateCustomerBriefing(
     .eq("id", accountId)
     .eq("firm_id", ctx.firm.id)
     .maybeSingle();
+
+  if (accountError) {
+    return dbReadFailure("client account");
+  }
 
   if (!account) {
     return { ok: false, status: 404, error: "Client account not found." };
@@ -134,6 +155,22 @@ export async function generateCustomerBriefing(
         .limit(15),
     ]);
 
+  const readError = [
+    contactsRes.error,
+    dealsRes.error,
+    filingsRes.error,
+    engagementsRes.error,
+    invoicesRes.error,
+    docsRes.error,
+    requestsRes.error,
+    staffRes.error,
+    accountActivitiesRes.error,
+  ].find(Boolean);
+
+  if (readError) {
+    return dbReadFailure("client briefing records");
+  }
+
   const contacts = contactsRes.data ?? [];
   const deals = dealsRes.data ?? [];
   const filings = filingsRes.data ?? [];
@@ -152,13 +189,16 @@ export async function generateCustomerBriefing(
 
   let relatedActivities: Array<Record<string, unknown>> = accountActivitiesRes.data ?? [];
   if (relatedExtraIds.length > 0) {
-    const { data: extraActs } = await ctx.supabase
+    const { data: extraActs, error: extraActsError } = await ctx.supabase
       .from("activities")
       .select("id, type, subject, body, due_at, completed_at, related_type, related_id, created_at")
       .eq("firm_id", ctx.firm.id)
       .in("related_id", relatedExtraIds)
       .order("created_at", { ascending: false })
       .limit(15);
+    if (extraActsError) {
+      return dbReadFailure("related client activities");
+    }
     const seen = new Set(relatedActivities.map((a) => String(a.id)));
     for (const act of extraActs ?? []) {
       if (!seen.has(String(act.id))) {
@@ -365,6 +405,7 @@ export async function generateCustomerBriefing(
 
   const result = await runAiFeature({
     supabase: ctx.supabase,
+    adminSupabase: ctx.adminSupabase,
     firm: ctx.firm,
     profile: ctx.profile,
     feature: "briefing",
@@ -415,13 +456,14 @@ export async function generateFollowUpDraft(
   const selectedRecords: Array<Record<string, unknown>> = [];
 
   if (input.entityType === "account") {
-    const { data: account } = await ctx.supabase
+    const { data: account, error: accountError } = await ctx.supabase
       .from("accounts")
       .select("id, firm_id, name, entity_type, email, phone, city, status, gst_filing_frequency, notes")
       .eq("id", input.entityId)
       .eq("firm_id", ctx.firm.id)
       .maybeSingle();
 
+    if (accountError) return dbReadFailure("client account");
     if (!account) return { ok: false, status: 404, error: "Client account not found." };
 
     const accountKey = `account:${account.id}`;
@@ -479,6 +521,10 @@ export async function generateFollowUpDraft(
         .order("invoice_date", { ascending: false })
         .limit(3),
     ]);
+
+    if (activitiesRes.error || filingsRes.error || invoicesRes.error) {
+      return dbReadFailure("client follow-up records");
+    }
 
     for (const act of activitiesRes.data ?? []) {
       const key = `activity:${act.id}`;
@@ -538,13 +584,14 @@ export async function generateFollowUpDraft(
       });
     }
   } else {
-    const { data: lead } = await ctx.supabase
+    const { data: lead, error: leadError } = await ctx.supabase
       .from("leads")
       .select("id, firm_id, first_name, last_name, company, email, phone, source, status, city, notes")
       .eq("id", input.entityId)
       .eq("firm_id", ctx.firm.id)
       .maybeSingle();
 
+    if (leadError) return dbReadFailure("lead record");
     if (!lead) return { ok: false, status: 404, error: "Lead not found." };
 
     const leadName = `${lead.first_name} ${lead.last_name ?? ""}`.trim();
@@ -588,6 +635,10 @@ export async function generateFollowUpDraft(
             .order("created_at", { ascending: false })
             .limit(4);
 
+    if (activitiesRes.error) {
+      return dbReadFailure("lead activities");
+    }
+
     for (const act of activitiesRes.data ?? []) {
       const key = `activity:${act.id}`;
       sources.push({
@@ -621,6 +672,7 @@ export async function generateFollowUpDraft(
 
   const result = await runAiFeature({
     supabase: ctx.supabase,
+    adminSupabase: ctx.adminSupabase,
     firm: ctx.firm,
     profile: ctx.profile,
     feature: "follow_up",
@@ -668,12 +720,13 @@ export async function extractTasksFromNotes(
   let relatedContext: Record<string, unknown> | null = null;
   if (input.relatedType && input.relatedId) {
     if (input.relatedType === "account") {
-      const { data: account } = await ctx.supabase
+      const { data: account, error: accountError } = await ctx.supabase
         .from("accounts")
         .select("id, name, entity_type")
         .eq("firm_id", ctx.firm.id)
         .eq("id", input.relatedId)
         .maybeSingle();
+      if (accountError) return dbReadFailure("client account");
       if (!account) return { ok: false, status: 404, error: "Client account not found." };
       relatedContext = {
         type: "account",
@@ -681,12 +734,13 @@ export async function extractTasksFromNotes(
         entityType: account.entity_type,
       };
     } else {
-      const { data: lead } = await ctx.supabase
+      const { data: lead, error: leadError } = await ctx.supabase
         .from("leads")
         .select("id, first_name, last_name, company")
         .eq("firm_id", ctx.firm.id)
         .eq("id", input.relatedId)
         .maybeSingle();
+      if (leadError) return dbReadFailure("lead record");
       if (!lead) return { ok: false, status: 404, error: "Lead not found." };
       relatedContext = {
         type: "lead",
@@ -696,12 +750,16 @@ export async function extractTasksFromNotes(
     }
   }
 
-  const { data: staffRows } = await ctx.supabase
+  const { data: staffRows, error: staffError } = await ctx.supabase
     .from("profiles")
     .select("id, full_name, role")
     .eq("firm_id", ctx.firm.id)
     .in("role", ["owner", "partner", "staff"])
     .order("full_name");
+
+  if (staffError) {
+    return dbReadFailure("firm staff list");
+  }
 
   const permittedStaff: StaffMember[] = staffRows ?? [];
   const now = ctx.now ?? new Date();
@@ -721,6 +779,7 @@ export async function extractTasksFromNotes(
 
   const result = await runAiFeature({
     supabase: ctx.supabase,
+    adminSupabase: ctx.adminSupabase,
     firm: ctx.firm,
     profile: ctx.profile,
     feature: "notes_to_tasks",
@@ -755,109 +814,71 @@ export async function confirmProposedTasks(
   ctx: Pick<AiServiceContext, "supabase" | "firm" | "profile">,
   input: z.infer<typeof ConfirmTasksRequestSchema>,
 ): Promise<ServiceOutcome<{ ok: true; deduplicated: boolean; createdIds: string[] }>> {
-  const existingBatch = await ctx.supabase
-    .from("ai_task_batches")
-    .select("id, created_activity_ids")
-    .eq("firm_id", ctx.firm.id)
-    .eq("idempotency_key", input.idempotencyKey)
-    .maybeSingle();
+  const { data, error } = await ctx.supabase.rpc("crmpro_confirm_ai_tasks", {
+    p_idempotency_key: input.idempotencyKey,
+    p_related_type: input.relatedType ?? null,
+    p_related_id: input.relatedId ?? null,
+    p_tasks: input.tasks,
+  });
 
-  if (existingBatch.error && isMissingTableError(existingBatch.error)) {
+  if (error) {
+    if (isProvisioningMissingError(error)) {
+      return {
+        ok: false,
+        status: 503,
+        error: "AI Copilot database tables or transactional task RPC are not provisioned yet. Apply the latest Supabase migration.",
+      };
+    }
+    if (error.code === "42501") {
+      return {
+        ok: false,
+        status: 403,
+        error: error.message || "Only active firm writers can confirm proposed tasks.",
+      };
+    }
+    if (error.code === "22023" || error.code === "22008") {
+      return {
+        ok: false,
+        status: 400,
+        error: error.message || "Invalid task confirmation parameters.",
+      };
+    }
     return {
       ok: false,
-      status: 503,
-      error: "AI Copilot database tables are not provisioned yet. Apply the latest Supabase migration.",
+      status: 500,
+      error: error.message || "Could not confirm tasks in the database.",
     };
   }
 
-  if (existingBatch.data) {
+  const parsed = ConfirmTasksRpcResponseSchema.safeParse(data);
+  if (!parsed.success) {
     return {
-      ok: true,
-      status: 200,
-      body: {
-        ok: true,
-        deduplicated: true,
-        createdIds: Array.isArray(existingBatch.data.created_activity_ids)
-          ? existingBatch.data.created_activity_ids.map(String)
-          : [],
-      },
+      ok: false,
+      status: 500,
+      error: "Unexpected task confirmation response from database.",
     };
   }
 
-  const relatedType = input.relatedType ?? null;
-  const relatedId = input.relatedId ?? null;
-  if (relatedType && relatedId) {
-    const table = relatedType === "account" ? "accounts" : "leads";
-    const { data: target } = await ctx.supabase
-      .from(table)
-      .select("id")
-      .eq("firm_id", ctx.firm.id)
-      .eq("id", relatedId)
-      .maybeSingle();
-    if (!target) {
-      return { ok: false, status: 404, error: "Related client or lead was not found in this firm." };
+  const rpcResult = parsed.data;
+  if (!rpcResult.ok) {
+    if (rpcResult.code === "idempotency_conflict") {
+      return {
+        ok: false,
+        status: 409,
+        error: rpcResult.error ?? "This idempotency key belongs to another caller or task payload.",
+      };
     }
-  }
-
-  const { data: staffRows } = await ctx.supabase
-    .from("profiles")
-    .select("id")
-    .eq("firm_id", ctx.firm.id)
-    .in("role", ["owner", "partner", "staff"]);
-  const allowedStaffIds = new Set((staffRows ?? []).map((row: { id: string }) => row.id));
-
-  const rowsToInsert = input.tasks.map((task) => {
-    const ownerId = task.assigneeId && allowedStaffIds.has(task.assigneeId) ? task.assigneeId : ctx.profile.id;
-    const dueAt = task.dueDate ? new Date(`${task.dueDate}T18:00:00+05:30`).toISOString() : null;
+    if (rpcResult.code === "not_found") {
+      return {
+        ok: false,
+        status: 404,
+        error: rpcResult.error ?? "Related client or lead was not found in this firm.",
+      };
+    }
     return {
-      firm_id: ctx.firm.id,
-      type: "task",
-      subject: task.title.trim(),
-      body: task.description?.trim() || null,
-      due_at: dueAt,
-      related_type: relatedType,
-      related_id: relatedId,
-      owner_id: ownerId,
-    };
-  });
-
-  const { data: insertedActivities, error: insertError } = await ctx.supabase
-    .from("activities")
-    .insert(rowsToInsert)
-    .select("id");
-
-  if (insertError || !insertedActivities) {
-    return { ok: false, status: 500, error: insertError?.message ?? "Could not create tasks." };
-  }
-
-  const createdIds = insertedActivities.map((row: { id: string }) => row.id);
-
-  const { error: batchError } = await ctx.supabase.from("ai_task_batches").insert({
-    firm_id: ctx.firm.id,
-    user_id: ctx.profile.id,
-    idempotency_key: input.idempotencyKey,
-    related_type: relatedType,
-    related_id: relatedId,
-    created_activity_ids: createdIds,
-  });
-
-  if (batchError && batchError.code === "23505") {
-    const { data: raceBatch } = await ctx.supabase
-      .from("ai_task_batches")
-      .select("created_activity_ids")
-      .eq("firm_id", ctx.firm.id)
-      .eq("idempotency_key", input.idempotencyKey)
-      .maybeSingle();
-    return {
-      ok: true,
-      status: 200,
-      body: {
-        ok: true,
-        deduplicated: true,
-        createdIds: Array.isArray(raceBatch?.created_activity_ids)
-          ? raceBatch.created_activity_ids.map(String)
-          : createdIds,
-      },
+      ok: false,
+      status: 500,
+      error: rpcResult.error ?? "Could not create tasks.",
     };
   }
 
@@ -866,8 +887,8 @@ export async function confirmProposedTasks(
     status: 200,
     body: {
       ok: true,
-      deduplicated: false,
-      createdIds,
+      deduplicated: Boolean(rpcResult.deduplicated),
+      createdIds: (rpcResult.created_ids ?? []).map(String),
     },
   };
 }
