@@ -1,0 +1,145 @@
+name: Verify AI Copilot & DB Constraints
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify-app-and-db:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 54322:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder-anon-key
+      NEXT_PUBLIC_APP_URL: https://crm360.unikorn360.com
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Bootstrap disposable PostgreSQL roles & Supabase stub schemas
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          do $$
+          begin
+            if not exists (select 1 from pg_roles where rolname = 'anon') then
+              create role anon nologin noinherit;
+            end if;
+            if not exists (select 1 from pg_roles where rolname = 'authenticated') then
+              create role authenticated nologin noinherit;
+            end if;
+            if not exists (select 1 from pg_roles where rolname = 'service_role') then
+              create role service_role nologin noinherit bypassrls;
+            end if;
+          end $$;
+
+          create schema if not exists extensions;
+          create extension if not exists pgcrypto with schema extensions;
+
+          create schema if not exists auth;
+          create table if not exists auth.users (
+            instance_id uuid,
+            id uuid primary key,
+            aud text,
+            role text,
+            email text,
+            encrypted_password text,
+            email_confirmed_at timestamptz,
+            raw_app_meta_data jsonb,
+            raw_user_meta_data jsonb,
+            created_at timestamptz,
+            updated_at timestamptz,
+            confirmation_token text,
+            recovery_token text,
+            email_change_token_new text,
+            email_change text
+          );
+
+          create or replace function auth.uid()
+          returns uuid
+          language sql
+          stable
+          as $$
+            select nullif(
+              coalesce(
+                nullif(current_setting('request.jwt.claim.sub', true), ''),
+                nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub'
+              ),
+              ''
+            )::uuid
+          $$;
+
+          create schema if not exists storage;
+          create table if not exists storage.buckets (
+            id text primary key,
+            name text not null,
+            public boolean not null default false,
+            file_size_limit bigint
+          );
+          create table if not exists storage.objects (
+            id uuid primary key default gen_random_uuid(),
+            bucket_id text references storage.buckets(id),
+            name text not null,
+            owner uuid,
+            created_at timestamptz default now()
+          );
+          create or replace function storage.foldername(name text)
+          returns text[]
+          language sql
+          immutable
+          as $$
+            select string_to_array(regexp_replace(coalesce(name, ''), '^/+', ''), '/')
+          $$;
+
+          grant usage on schema public, extensions, auth, storage to postgres, anon, authenticated, service_role;
+          grant execute on function auth.uid() to postgres, anon, authenticated, service_role;
+          grant execute on function storage.foldername(text) to postgres, anon, authenticated, service_role;
+          grant select, insert, update, delete on all tables in schema storage to postgres, authenticated, service_role;
+          SQL
+
+      - name: Apply CRM & AI Copilot migrations in exact order
+        run: |
+          for f in $(ls -1 supabase/migrations/*.sql | sort); do
+            echo "Applying $f"
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: Run real PostgreSQL concurrency, trust-boundary, and RLS tests
+        run: npx vitest run tests/ai-concurrency-db.test.ts tests/rls.test.ts
+
+      - name: Run TypeScript typecheck
+        run: npx tsc --noEmit
+
+      - name: Run unit, AI, session, and PKCE tests
+        run: npx vitest run tests/ai-copilot.test.ts tests/session.test.ts tests/pkce.test.ts
+
+      - name: Build OpenNext Cloudflare bundle
+        run: npm run build:cf

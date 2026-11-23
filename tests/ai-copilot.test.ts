@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  AI_EXTERNAL_NOTICE,
   dailyQuotaForPlan,
   canManageAiSettings,
   canUseAiCopilot,
@@ -370,6 +371,15 @@ function createMockSupabase(initial: MockDbState) {
         const userId = String(args.p_user_id ?? "");
         const status = String(args.p_status ?? "");
         const latencyMs = typeof args.p_latency_ms === "number" ? Math.max(0, args.p_latency_ms) : null;
+        const promptTokens = typeof args.p_prompt_tokens === "number" ? Math.max(0, args.p_prompt_tokens) : null;
+        const completionTokens =
+          typeof args.p_completion_tokens === "number" ? Math.max(0, args.p_completion_tokens) : null;
+        const totalTokens =
+          typeof args.p_total_tokens === "number"
+            ? Math.max(0, args.p_total_tokens)
+            : promptTokens !== null && completionTokens !== null
+              ? promptTokens + completionTokens
+              : null;
 
         const profile = db.profiles.find(
           (p) =>
@@ -443,6 +453,9 @@ function createMockSupabase(initial: MockDbState) {
           if (usedCurrentDay >= dailyQuota || (eventDayStart < currentDayStart && usedEventDay >= dailyQuota)) {
             target.status = "aborted";
             target.latency_ms = latencyMs;
+            target.prompt_tokens = promptTokens;
+            target.completion_tokens = completionTokens;
+            target.total_tokens = totalTokens;
             target.lease_expires_at = null;
             return {
               data: {
@@ -463,6 +476,9 @@ function createMockSupabase(initial: MockDbState) {
 
         target.status = status;
         target.latency_ms = latencyMs;
+        target.prompt_tokens = promptTokens;
+        target.completion_tokens = completionTokens;
+        target.total_tokens = totalTokens;
         target.lease_expires_at = null;
         return { data: { ok: true, status }, error: null };
       }
@@ -645,7 +661,10 @@ describe("AI Copilot roles, configuration, and prompt boundaries", () => {
     process.env.GEMINI_MODEL = "gemini-4-hydrogen";
   });
 
-  it("enforces role permissions and plan daily quotas", () => {
+  it("enforces role permissions, plan daily quotas, and accurate data disclosure", () => {
+    expect(AI_EXTERNAL_NOTICE.toLowerCase()).not.toContain("non-sensitive");
+    expect(AI_EXTERNAL_NOTICE.toLowerCase()).toContain("confidential");
+
     expect(canManageAiSettings("owner")).toBe(true);
     expect(canManageAiSettings("partner")).toBe(true);
     expect(canManageAiSettings("staff")).toBe(false);
@@ -1055,6 +1074,7 @@ describe("AI Copilot roles, configuration, and prompt boundaries", () => {
     const mock = createMockSupabase({
       ai_firm_settings: [{ firm_id: FIRM_A.id, enabled: true, notice_accepted_at: "2026-11-22T00:00:00Z" }],
     });
+    const now = new Date("2026-11-23T10:00:00+05:30");
     let attempts = 0;
     const res = await runAiFeature({
       supabase: mock.client,
@@ -1066,6 +1086,7 @@ describe("AI Copilot roles, configuration, and prompt boundaries", () => {
       prompt: wrapped,
       responseSchema: {} as never,
       zodSchema: BriefingModelOutputSchema,
+      now,
       generateJson: async () => {
         attempts += 1;
         if (attempts === 1) {
@@ -1073,23 +1094,67 @@ describe("AI Copilot roles, configuration, and prompt boundaries", () => {
           err.status = 503;
           throw err;
         }
-        return JSON.stringify({
-          overviewSummary: "Active proprietorship client.",
-          overviewFacts: [],
-          recentActivity: [],
-          openDeals: [],
-          outstandingCommitments: [],
-          suggestedNextActions: [],
-          missingInformation: [],
-        });
+        return {
+          text: JSON.stringify({
+            overviewSummary: "Active proprietorship client.",
+            overviewFacts: [],
+            recentActivity: [],
+            openDeals: [],
+            outstandingCommitments: [],
+            suggestedNextActions: [],
+            missingInformation: [],
+          }),
+          usage: {
+            promptTokens: 210,
+            completionTokens: 45,
+            totalTokens: 255,
+          },
+        };
       },
     });
     expect(attempts).toBe(2);
     expect(res.ok).toBe(true);
     expect(mock.db.ai_usage_events).toHaveLength(1);
     expect(mock.db.ai_usage_events[0].status).toBe("ok");
+    expect(mock.db.ai_usage_events[0].total_tokens).toBe(255);
     // Ensures no raw prompt or response body is persisted in ai_usage_events
     expect("prompt" in mock.db.ai_usage_events[0]).toBe(false);
+
+    // Discarded validation failures still log token counts separately from completed quota
+    mock.db.ai_usage_events[0].created_at = new Date(now.getTime() - 10_000).toISOString();
+    const invalidWithTokens = await runAiFeature({
+      supabase: mock.client,
+      adminSupabase: mock.adminClient,
+      firm: FIRM_A,
+      profile: PROFILE_STAFF,
+      feature: "briefing",
+      systemInstruction: "sys",
+      prompt: wrapped,
+      responseSchema: {} as never,
+      zodSchema: BriefingModelOutputSchema,
+      now,
+      generateJson: async () => ({
+        text: "not-valid-json",
+        usage: { promptTokens: 150, completionTokens: 20, totalTokens: 170 },
+      }),
+    });
+    expect(invalidWithTokens.ok).toBe(false);
+
+    const status = await getFirmAiStatus(
+      createMockSupabase({
+        ai_firm_settings: mock.db.ai_firm_settings,
+        ai_usage_events: mock.db.ai_usage_events.map((e) => ({
+          ...e,
+          created_at: new Date(now.getTime() - 10_000).toISOString(),
+        })),
+        now: () => now,
+      }).client,
+      FIRM_A,
+      now,
+    );
+    expect(status.usedToday).toBe(1);
+    expect(status.attemptsToday).toBe(2);
+    expect(status.tokensToday).toBe(425);
   });
 
   it("rejects oversized inputs via Zod request schemas", () => {

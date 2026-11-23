@@ -10,8 +10,8 @@ function first(names) {
   return "";
 }
 
-// The Worker stores these as SUPABASE_URL / SUPABASE_ANON_KEY (and the Vite names).
-// Next only inlines NEXT_PUBLIC_* into the browser bundle, so copy them across.
+// OpenNext copies .env files into build artifacts; keep only public NEXT_PUBLIC_* variables here.
+// Server-only secrets (GEMINI_API_KEY, SUPABASE_SERVICE_ROLE_KEY, GEMINI_MODEL) load from Worker runtime Secrets.
 const values = {
   NEXT_PUBLIC_SUPABASE_URL: first(["NEXT_PUBLIC_SUPABASE_URL", "SUPABASE_URL", "VITE_SUPABASE_URL"]),
   NEXT_PUBLIC_SUPABASE_ANON_KEY: first(["NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_ANON_KEY", "VITE_SUPABASE_ANON_KEY"]),
@@ -21,8 +21,6 @@ const values = {
       ? "https://crm360.unikorn360.com"
       : ""),
   NEXT_PUBLIC_DEMO_MODE: first(["NEXT_PUBLIC_DEMO_MODE"]),
-  SUPABASE_SERVICE_ROLE_KEY: first(["SUPABASE_SERVICE_ROLE_KEY"]),
-  SUPABASE_INTERNAL_URL: first(["SUPABASE_INTERNAL_URL"]),
 };
 
 const lines = [];

@@ -243,11 +243,14 @@ export default async function SettingsPage() {
             <span className="tabular-nums">
               {aiStatus.usedToday} / {aiStatus.dailyQuota}
             </span>{" "}
-            requests today ({plan.name} plan) · Model {aiStatus.model}
+            completed today ({plan.name} plan) ·{" "}
+            <span className="tabular-nums">{aiStatus.attemptsToday}</span> attempts ·{" "}
+            <span className="tabular-nums">{aiStatus.tokensToday.toLocaleString("en-IN")}</span> tokens logged · Model{" "}
+            {aiStatus.model}
           </p>
           {!aiStatus.schemaReady ? (
             <p className="mt-2 text-xs text-destructive">
-              AI database tables are missing. Apply the latest Supabase migration before enabling AI Copilot.
+              AI database tables or latest accounting columns are missing. Apply pending Supabase migrations before enabling AI Copilot.
             </p>
           ) : aiStatus.statusError ? (
             <p className="mt-2 text-xs text-destructive">
@@ -261,6 +264,11 @@ export default async function SettingsPage() {
           ) : null}
           <p className="mt-3 rounded-lg border border-border bg-muted/40 p-3 text-xs leading-relaxed text-muted-foreground">
             {AI_EXTERNAL_NOTICE}
+          </p>
+          <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+            Daily response quotas limit completed responses plus active requests and are not a provider spending cap;
+            retries, provider errors, and discarded outputs may still consume tokens. Enforce spend protection with
+            Google Cloud / Gemini API quota caps (budget alerts notify only and do not block API calls).
           </p>
           {canManageAi ? (
             <ActionForm action={updateAiSettings} className="mt-3">

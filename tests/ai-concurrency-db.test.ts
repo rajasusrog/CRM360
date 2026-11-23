@@ -31,6 +31,16 @@ commit;
 `;
 }
 
+function asAnonSql(bodySql: string): string {
+  return `
+begin;
+set local role anon;
+select set_config('request.jwt.claims', '{"role":"anon"}', true);
+${bodySql}
+commit;
+`;
+}
+
 function asServiceRoleSql(bodySql: string): string {
   return `
 begin;
@@ -49,6 +59,9 @@ const USER_STARTER_READONLY = "cc000000-0000-4000-8000-0000000000a4";
 const USER_GROWTH_STAFF = "cc000000-0000-4000-8000-0000000000b2";
 const ACCOUNT_STARTER = "cc000000-0000-4000-8000-0000000000c1";
 const ACCOUNT_GROWTH = "cc000000-0000-4000-8000-0000000000c2";
+
+const FINALIZE_SIGNATURE =
+  "crmpro.crmpro_finalize_ai_usage(uuid, uuid, uuid, text, integer, integer, integer, integer)";
 
 describe("AI Copilot PostgreSQL trust boundary, concurrency, late completion, and idempotency", () => {
   beforeAll(() => {
@@ -111,8 +124,30 @@ commit;
     }
   });
 
-  it("blocks direct authenticated finalization and table write forgery, allowing only service_role finalization", async () => {
+  it("blocks anon and authenticated finalization via EXECUTE grants and table write forgery, allowing only service_role", async () => {
     psqlSync(`delete from crmpro.ai_usage_events where firm_id = '${FIRM_STARTER}';`);
+
+    // Verify PostgreSQL catalog EXECUTE privileges directly
+    const privRow = psqlSync(`
+      select json_build_object(
+        'public_exec', has_function_privilege('public', '${FINALIZE_SIGNATURE}', 'execute'),
+        'anon_exec', has_function_privilege('anon', '${FINALIZE_SIGNATURE}', 'execute'),
+        'auth_exec', has_function_privilege('authenticated', '${FINALIZE_SIGNATURE}', 'execute'),
+        'service_exec', has_function_privilege('service_role', '${FINALIZE_SIGNATURE}', 'execute')
+      )::text;
+    `);
+    const privs = JSON.parse(privRow) as {
+      public_exec: boolean;
+      anon_exec: boolean;
+      auth_exec: boolean;
+      service_exec: boolean;
+    };
+    expect(privs).toEqual({
+      public_exec: false,
+      anon_exec: false,
+      auth_exec: false,
+      service_exec: true,
+    });
 
     const reserveRaw = await psqlAsync(
       asAuthenticatedSql(
@@ -123,17 +158,26 @@ commit;
     const reserve = JSON.parse(reserveRaw.split("\n").pop()!) as { allowed: boolean; event_id: string };
     expect(reserve.allowed).toBe(true);
 
-    // Direct authenticated call to 5-arg finalize RPC must fail with permission denied
+    // Direct anonymous call to finalize RPC must fail with permission denied
     await expect(
       psqlAsync(
-        asAuthenticatedSql(
-          USER_STARTER_STAFF,
-          `select crmpro.crmpro_finalize_ai_usage('${reserve.event_id}'::uuid, '${FIRM_STARTER}'::uuid, '${USER_STARTER_STAFF}'::uuid, 'aborted', 5)::text;`,
+        asAnonSql(
+          `select crmpro.crmpro_finalize_ai_usage('${reserve.event_id}'::uuid, '${FIRM_STARTER}'::uuid, '${USER_STARTER_STAFF}'::uuid, 'aborted', 5, 10, 5, 15)::text;`,
         ),
       ),
     ).rejects.toThrow(/permission denied/i);
 
-    // Legacy 3-arg signature must not exist for authenticated callers
+    // Direct authenticated call to finalize RPC must fail with permission denied
+    await expect(
+      psqlAsync(
+        asAuthenticatedSql(
+          USER_STARTER_STAFF,
+          `select crmpro.crmpro_finalize_ai_usage('${reserve.event_id}'::uuid, '${FIRM_STARTER}'::uuid, '${USER_STARTER_STAFF}'::uuid, 'aborted', 5, 10, 5, 15)::text;`,
+        ),
+      ),
+    ).rejects.toThrow(/permission denied/i);
+
+    // Legacy 3-arg and 5-arg signatures must not exist
     await expect(
       psqlAsync(
         asAuthenticatedSql(
@@ -142,6 +186,14 @@ commit;
         ),
       ),
     ).rejects.toThrow(/does not exist|permission denied/i);
+
+    await expect(
+      psqlAsync(
+        asServiceRoleSql(
+          `select crmpro.crmpro_finalize_ai_usage('${reserve.event_id}'::uuid, '${FIRM_STARTER}'::uuid, '${USER_STARTER_STAFF}'::uuid, 'ok', 100)::text;`,
+        ),
+      ),
+    ).rejects.toThrow(/function crmpro\.crmpro_finalize_ai_usage.*does not exist|not unique/i);
 
     // Direct INSERT/UPDATE forgery into ai_usage_events and ai_task_batches must fail
     await expect(
@@ -165,22 +217,27 @@ commit;
     // Service role with mismatched user_id cannot finalize another user's reservation
     const wrongUserRaw = await psqlAsync(
       asServiceRoleSql(
-        `select crmpro.crmpro_finalize_ai_usage('${reserve.event_id}'::uuid, '${FIRM_STARTER}'::uuid, '${USER_STARTER_PARTNER}'::uuid, 'ok', 100)::text;`,
+        `select crmpro.crmpro_finalize_ai_usage('${reserve.event_id}'::uuid, '${FIRM_STARTER}'::uuid, '${USER_STARTER_PARTNER}'::uuid, 'ok', 100, 120, 45, 165)::text;`,
       ),
     );
     const wrongUser = JSON.parse(wrongUserRaw.split("\n").pop()!) as { ok: boolean; code: string };
     expect(wrongUser.ok).toBe(false);
     expect(wrongUser.code).toBe("not_found");
 
-    // Service role with matching firm and user succeeds
+    // Service role with matching firm and user succeeds and stores token usage
     const validFinRaw = await psqlAsync(
       asServiceRoleSql(
-        `select crmpro.crmpro_finalize_ai_usage('${reserve.event_id}'::uuid, '${FIRM_STARTER}'::uuid, '${USER_STARTER_STAFF}'::uuid, 'ok', 180)::text;`,
+        `select crmpro.crmpro_finalize_ai_usage('${reserve.event_id}'::uuid, '${FIRM_STARTER}'::uuid, '${USER_STARTER_STAFF}'::uuid, 'ok', 180, 120, 45, 165)::text;`,
       ),
     );
     const validFin = JSON.parse(validFinRaw.split("\n").pop()!) as { ok: boolean; status: string };
     expect(validFin.ok).toBe(true);
     expect(validFin.status).toBe("ok");
+
+    const tokensRow = psqlSync(
+      `select json_build_object('p', prompt_tokens, 'c', completion_tokens, 't', total_tokens)::text from crmpro.ai_usage_events where id = '${reserve.event_id}';`,
+    );
+    expect(JSON.parse(tokensRow)).toEqual({ p: 120, c: 45, t: 165 });
   });
 
   it("prevents late completion after lease expiry from exceeding daily firm quota", async () => {
@@ -225,15 +282,15 @@ from generate_series(1, 24) as g;
 
     const fastFinRaw = await psqlAsync(
       asServiceRoleSql(
-        `select crmpro.crmpro_finalize_ai_usage('${fastReserve.event_id}'::uuid, '${FIRM_STARTER}'::uuid, '${USER_STARTER_PARTNER}'::uuid, 'ok', 90)::text;`,
+        `select crmpro.crmpro_finalize_ai_usage('${fastReserve.event_id}'::uuid, '${FIRM_STARTER}'::uuid, '${USER_STARTER_PARTNER}'::uuid, 'ok', 90, 80, 20, 100)::text;`,
       ),
     );
     expect((JSON.parse(fastFinRaw.split("\n").pop()!) as { ok: boolean }).ok).toBe(true);
 
-    // Slow request finishes late and tries to finalize as 'ok': must be rejected cleanly
+    // Slow request finishes late and tries to finalize as 'ok': must be rejected cleanly while recording aborted tokens
     const lateFinRaw = await psqlAsync(
       asServiceRoleSql(
-        `select crmpro.crmpro_finalize_ai_usage('${slowReserve.event_id}'::uuid, '${FIRM_STARTER}'::uuid, '${USER_STARTER_STAFF}'::uuid, 'ok', 125000)::text;`,
+        `select crmpro.crmpro_finalize_ai_usage('${slowReserve.event_id}'::uuid, '${FIRM_STARTER}'::uuid, '${USER_STARTER_STAFF}'::uuid, 'ok', 125000, 300, 100, 400)::text;`,
       ),
     );
     const lateFin = JSON.parse(lateFinRaw.split("\n").pop()!) as { ok: boolean; code: string };
@@ -244,6 +301,10 @@ from generate_series(1, 24) as g;
       psqlSync(`select count(*) from crmpro.ai_usage_events where firm_id = '${FIRM_STARTER}' and status = 'ok';`),
     );
     expect(okCount).toBe(25);
+    const abortedTokens = Number(
+      psqlSync(`select total_tokens from crmpro.ai_usage_events where id = '${slowReserve.event_id}';`),
+    );
+    expect(abortedTokens).toBe(400);
   });
 
   it("enforces daily quota and 10-minute burst limit under concurrent parallel reservations", async () => {

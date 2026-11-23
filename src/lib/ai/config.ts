@@ -24,7 +24,7 @@ export const AI_LIMITS = {
 } as const;
 
 export const AI_EXTERNAL_NOTICE =
-  "When enabled, Unikorn360 sends minimal, non-sensitive CRM fields (client name, open deals, recent activity summaries, filing due dates, invoice totals, or pasted notes) to Google Gemini over TLS to draft briefings, follow-ups, and proposed tasks. Prompts and AI outputs are not persisted in the CRM database; only request counts and feedback metadata are logged.";
+  "When enabled, Unikorn360 sends selected CRM records—which may include confidential client names, engagement or deal details, compliance due dates, invoice totals, or personal and business information in pasted notes—to Google Gemini over TLS to draft briefings, follow-ups, and proposed tasks. Prompts and AI outputs are not stored in the CRM database; request outcomes, latency, and token usage counts are logged for quota and cost tracking.";
 
 export type AiServerConfig = {
   configured: boolean;

@@ -1,3 +1,4 @@
+import "server-only";
 import { GoogleGenAI, ThinkingLevel, type Schema } from "@google/genai";
 import { z } from "zod";
 import {
@@ -24,6 +25,8 @@ export type AiFirmStatus = {
   noticeAcceptedAt: string | null;
   dailyQuota: number;
   usedToday: number;
+  attemptsToday: number;
+  tokensToday: number;
   statusError?: string | null;
 };
 
@@ -49,7 +52,20 @@ export type GenerateJsonParams = {
   signal: AbortSignal;
 };
 
-export type GenerateJsonFn = (params: GenerateJsonParams) => Promise<string>;
+export type AiTokenUsage = {
+  promptTokens?: number | null;
+  completionTokens?: number | null;
+  totalTokens?: number | null;
+};
+
+export type GenerateJsonOutput = {
+  text: string;
+  usage?: AiTokenUsage;
+};
+
+export type GenerateJsonResult = string | GenerateJsonOutput;
+
+export type GenerateJsonFn = (params: GenerateJsonParams) => Promise<GenerateJsonResult>;
 
 const ReservationResponseSchema = z.object({
   allowed: z.boolean(),
@@ -152,6 +168,8 @@ export async function getFirmAiStatus(supabase: CrmSupabaseClient, firm: Firm, n
         noticeAcceptedAt: null,
         dailyQuota,
         usedToday: 0,
+        attemptsToday: 0,
+        tokensToday: 0,
       };
     }
     return {
@@ -162,6 +180,8 @@ export async function getFirmAiStatus(supabase: CrmSupabaseClient, firm: Firm, n
       noticeAcceptedAt: null,
       dailyQuota,
       usedToday: 0,
+      attemptsToday: 0,
+      tokensToday: 0,
       statusError: settingsRes.error.message || "Unable to load firm AI settings.",
     };
   }
@@ -171,12 +191,10 @@ export async function getFirmAiStatus(supabase: CrmSupabaseClient, firm: Firm, n
   const leaseCutoffIso = new Date(now.getTime() - AI_RESERVATION_LEASE_MINUTES * 60_000).toISOString();
   const usageRes = await supabase
     .from("ai_usage_events")
-    .select("id", { count: "exact", head: true })
+    .select("status, lease_expires_at, created_at, total_tokens")
     .eq("firm_id", firm.id)
     .gte("created_at", dayStart)
-    .or(
-      `status.eq.ok,and(status.eq.reserved,lease_expires_at.gt.${nowIso}),and(status.eq.reserved,lease_expires_at.is.null,created_at.gte.${leaseCutoffIso})`,
-    );
+    .limit(2000);
 
   if (usageRes.error) {
     if (isProvisioningMissingError(usageRes.error)) {
@@ -188,6 +206,8 @@ export async function getFirmAiStatus(supabase: CrmSupabaseClient, firm: Firm, n
         noticeAcceptedAt: settingsRes.data?.notice_accepted_at ?? null,
         dailyQuota,
         usedToday: 0,
+        attemptsToday: 0,
+        tokensToday: 0,
       };
     }
     return {
@@ -198,8 +218,37 @@ export async function getFirmAiStatus(supabase: CrmSupabaseClient, firm: Firm, n
       noticeAcceptedAt: settingsRes.data?.notice_accepted_at ?? null,
       dailyQuota,
       usedToday: 0,
+      attemptsToday: 0,
+      tokensToday: 0,
       statusError: usageRes.error.message || "Unable to verify today's AI usage quota.",
     };
+  }
+
+  let usedToday = 0;
+  let attemptsToday = 0;
+  let tokensToday = 0;
+  for (const row of usageRes.data ?? []) {
+    const rowStatus = String(row.status ?? "");
+    const activeLease =
+      rowStatus === "reserved" &&
+      (row.lease_expires_at
+        ? String(row.lease_expires_at) > nowIso
+        : String(row.created_at ?? "") >= leaseCutoffIso);
+    if (rowStatus === "ok" || activeLease) {
+      usedToday += 1;
+    }
+    if (
+      rowStatus === "ok" ||
+      rowStatus === "provider_error" ||
+      rowStatus === "validation_error" ||
+      rowStatus === "aborted" ||
+      activeLease
+    ) {
+      attemptsToday += 1;
+    }
+    if (typeof row.total_tokens === "number" && Number.isFinite(row.total_tokens) && row.total_tokens > 0) {
+      tokensToday += Math.round(row.total_tokens);
+    }
   }
 
   return {
@@ -209,7 +258,9 @@ export async function getFirmAiStatus(supabase: CrmSupabaseClient, firm: Firm, n
     enabled: Boolean(settingsRes.data?.enabled && settingsRes.data?.notice_accepted_at),
     noticeAcceptedAt: settingsRes.data?.notice_accepted_at ?? null,
     dailyQuota,
-    usedToday: usageRes.count ?? 0,
+    usedToday,
+    attemptsToday,
+    tokensToday,
     statusError: null,
   };
 }
@@ -231,7 +282,12 @@ function isTransientProviderError(error: unknown): boolean {
   return false;
 }
 
-export async function defaultGeminiGenerateJson(params: GenerateJsonParams): Promise<string> {
+function toNonNegativeInt(value: number | null | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return Math.max(0, Math.round(value));
+}
+
+export async function defaultGeminiGenerateJson(params: GenerateJsonParams): Promise<GenerateJsonOutput> {
   const ai = new GoogleGenAI({
     apiKey: params.apiKey,
     httpOptions: {
@@ -256,7 +312,18 @@ export async function defaultGeminiGenerateJson(params: GenerateJsonParams): Pro
   if (!response.text) {
     throw new Error("Empty model response");
   }
-  return response.text;
+
+  const meta = response.usageMetadata;
+  return {
+    text: response.text,
+    usage: meta
+      ? {
+          promptTokens: toNonNegativeInt(meta.promptTokenCount),
+          completionTokens: toNonNegativeInt(meta.candidatesTokenCount),
+          totalTokens: toNonNegativeInt(meta.totalTokenCount),
+        }
+      : undefined,
+  };
 }
 
 async function finalizeAiUsage(
@@ -267,14 +334,24 @@ async function finalizeAiUsage(
     userId: string;
     status: "ok" | "provider_error" | "validation_error" | "aborted";
     latencyMs: number | null;
+    usage?: AiTokenUsage;
   },
 ): Promise<{ ok: boolean; statusCode?: number; error?: string }> {
+  const promptTokens = toNonNegativeInt(params.usage?.promptTokens);
+  const completionTokens = toNonNegativeInt(params.usage?.completionTokens);
+  const totalTokens =
+    toNonNegativeInt(params.usage?.totalTokens) ??
+    (promptTokens !== null && completionTokens !== null ? promptTokens + completionTokens : null);
+
   const { data, error } = await adminSupabase.rpc("crmpro_finalize_ai_usage", {
     p_event_id: params.eventId,
     p_firm_id: params.firmId,
     p_user_id: params.userId,
     p_status: params.status,
-    p_latency_ms: params.latencyMs === null ? null : Math.max(0, Math.round(params.latencyMs)),
+    p_latency_ms: toNonNegativeInt(params.latencyMs),
+    p_prompt_tokens: promptTokens,
+    p_completion_tokens: completionTokens,
+    p_total_tokens: totalTokens,
   });
 
   if (error) {
@@ -452,6 +529,7 @@ export async function runAiFeature<TSchema extends z.ZodTypeAny>(options: {
   const generate = options.generateJson ?? defaultGeminiGenerateJson;
   const startedAt = Date.now();
   let rawText: string | null = null;
+  let usage: AiTokenUsage | undefined;
   let lastError: unknown = null;
 
   for (let attempt = 0; attempt <= AI_LIMITS.maxRetries; attempt++) {
@@ -472,7 +550,7 @@ export async function runAiFeature<TSchema extends z.ZodTypeAny>(options: {
     options.requestSignal?.addEventListener("abort", onParentAbort, { once: true });
 
     try {
-      rawText = await generate({
+      const generated = await generate({
         model: config.model,
         apiKey: config.apiKey,
         systemInstruction: options.systemInstruction,
@@ -480,6 +558,12 @@ export async function runAiFeature<TSchema extends z.ZodTypeAny>(options: {
         responseSchema: options.responseSchema,
         signal: controller.signal,
       });
+      if (typeof generated === "string") {
+        rawText = generated;
+      } else {
+        rawText = generated.text;
+        usage = generated.usage;
+      }
       lastError = null;
       clearTimeout(timer);
       options.requestSignal?.removeEventListener("abort", onParentAbort);
@@ -534,6 +618,7 @@ export async function runAiFeature<TSchema extends z.ZodTypeAny>(options: {
       userId: options.profile.id,
       status: "validation_error",
       latencyMs,
+      usage,
     });
     return {
       ok: false,
@@ -551,6 +636,7 @@ export async function runAiFeature<TSchema extends z.ZodTypeAny>(options: {
       userId: options.profile.id,
       status: "validation_error",
       latencyMs,
+      usage,
     });
     return {
       ok: false,
@@ -566,6 +652,7 @@ export async function runAiFeature<TSchema extends z.ZodTypeAny>(options: {
     userId: options.profile.id,
     status: "ok",
     latencyMs,
+    usage,
   });
   if (!finalized.ok) {
     return {

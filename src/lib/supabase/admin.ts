@@ -1,3 +1,4 @@
+import "server-only";
 import { createClient } from "@supabase/supabase-js";
 import { CRM_SCHEMA, type CrmDatabase } from "@/lib/supabase/options";
 
