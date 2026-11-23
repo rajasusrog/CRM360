@@ -121,17 +121,25 @@ export function resolveAuthDestination(
 ): string {
   const requested = safeNextPath(options?.requestedNext, options?.allowedOrigin);
 
+  if (session.state === "unauthenticated") {
+    if (requested && requested !== "/") {
+      return `/login?next=${encodeURIComponent(requested)}`;
+    }
+    return "/login";
+  }
+
+  if (session.state === "lookup_failed" || session.state === "invalid_membership" || session.issue) {
+    return "/auth/recovery";
+  }
+
+  if (!session.user) {
+    if (requested && requested !== "/") {
+      return `/login?next=${encodeURIComponent(requested)}`;
+    }
+    return "/login";
+  }
+
   switch (session.state) {
-    case "unauthenticated": {
-      if (requested && requested !== "/") {
-        return `/login?next=${encodeURIComponent(requested)}`;
-      }
-      return "/login";
-    }
-    case "lookup_failed":
-    case "invalid_membership": {
-      return "/auth/recovery";
-    }
     case "no_membership": {
       if (requested && (requested.startsWith("/join/") || requested.startsWith("/portal/join/"))) {
         return requested;
@@ -139,6 +147,9 @@ export function resolveAuthDestination(
       return "/onboarding";
     }
     case "staff": {
+      if (!session.profile || !session.firm || session.profile.firm_id !== session.firm.id) {
+        return "/auth/recovery";
+      }
       if (
         requested &&
         requested !== "/onboarding" &&
@@ -152,6 +163,9 @@ export function resolveAuthDestination(
       return "/dashboard";
     }
     case "client": {
+      if (!session.client || !session.firm || session.client.firm_id !== session.firm.id) {
+        return "/auth/recovery";
+      }
       if (
         requested &&
         (requested === "/portal" || requested.startsWith("/portal/")) &&
@@ -277,7 +291,8 @@ export async function resolveSessionFromClient(
           },
         };
       }
-      if (!firmRes.data) {
+      const staffFirm = (firmRes.data as Firm | null) ?? null;
+      if (!staffFirm || staffFirm.id !== profile.firm_id) {
         return {
           supabase,
           state: "invalid_membership",
@@ -296,7 +311,7 @@ export async function resolveSessionFromClient(
         state: "staff",
         user,
         profile,
-        firm: firmRes.data as Firm,
+        firm: staffFirm,
         client: null,
         issue: null,
       };
@@ -320,7 +335,8 @@ export async function resolveSessionFromClient(
           },
         };
       }
-      if (!firmRes.data) {
+      const clientFirm = (firmRes.data as Firm | null) ?? null;
+      if (!clientFirm || clientFirm.id !== client.firm_id) {
         return {
           supabase,
           state: "invalid_membership",
@@ -339,7 +355,7 @@ export async function resolveSessionFromClient(
         state: "client",
         user,
         profile: null,
-        firm: firmRes.data as Firm,
+        firm: clientFirm,
         client,
         issue: null,
       };

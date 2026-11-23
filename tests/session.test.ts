@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import type { User } from "@supabase/supabase-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CrmSupabaseClient, Firm, Profile, ClientUser } from "@/lib/auth-routing";
 
@@ -40,7 +41,7 @@ import {
 } from "@/lib/session";
 import { GET as continueGet } from "@/app/auth/continue/route";
 
-const DEMO_USER = {
+const DEMO_USER: User = {
   id: "user-1",
   email: "staff@kaveri.test",
   app_metadata: {},
@@ -458,5 +459,90 @@ describe("GET /auth/continue", () => {
     const missingFirmRes = await continueGet(new NextRequest("https://crmpro360.unikorn360.com/auth/continue"));
     expect(missingFirmRes.headers.get("location")).toBe("https://crmpro360.unikorn360.com/auth/recovery");
     expect(missingFirmRes.headers.get("cache-control")).toBe("no-store");
+  });
+});
+
+describe("verified session routing invariants (consolidated from auth-routing)", () => {
+  const baseSession = {
+    state: "unauthenticated" as const,
+    user: null,
+    profile: null,
+    client: null,
+    firm: null,
+    issue: null,
+  };
+
+  it("stops missing-firm staff and client sessions at /auth/recovery even if passed directly", () => {
+    expect(
+      resolveAuthDestination({
+        ...baseSession,
+        state: "staff",
+        user: DEMO_USER,
+        profile: DEMO_PROFILE,
+        firm: null,
+      }),
+    ).toBe("/auth/recovery");
+
+    expect(
+      resolveAuthDestination({
+        ...baseSession,
+        state: "client",
+        user: DEMO_USER,
+        client: DEMO_CLIENT,
+        firm: null,
+      }),
+    ).toBe("/auth/recovery");
+  });
+
+  it("rejects mismatched profile and client firm IDs both in resolveAuthDestination and getSession()", async () => {
+    const otherFirm: Firm = { ...DEMO_FIRM, id: "firm-other" };
+
+    expect(
+      resolveAuthDestination({
+        ...baseSession,
+        state: "staff",
+        user: DEMO_USER,
+        profile: DEMO_PROFILE,
+        firm: otherFirm,
+      }),
+    ).toBe("/auth/recovery");
+
+    expect(
+      resolveAuthDestination({
+        ...baseSession,
+        state: "client",
+        user: DEMO_USER,
+        client: DEMO_CLIENT,
+        firm: otherFirm,
+      }),
+    ).toBe("/auth/recovery");
+
+    mockCreateClient.mockResolvedValue(
+      makeMockSupabase({
+        tables: {
+          profiles: { data: DEMO_PROFILE, error: null },
+          client_users: { data: null, error: null },
+          firms: { data: otherFirm, error: null },
+        },
+      }),
+    );
+    const staffMismatch = await getSession();
+    expect(staffMismatch.state).toBe("invalid_membership");
+    expect(staffMismatch.issue?.code).toBe("missing_firm");
+    expect(resolveAuthDestination(staffMismatch)).toBe("/auth/recovery");
+
+    mockCreateClient.mockResolvedValue(
+      makeMockSupabase({
+        tables: {
+          profiles: { data: null, error: null },
+          client_users: { data: DEMO_CLIENT, error: null },
+          firms: { data: otherFirm, error: null },
+        },
+      }),
+    );
+    const clientMismatch = await getSession();
+    expect(clientMismatch.state).toBe("invalid_membership");
+    expect(clientMismatch.issue?.code).toBe("missing_firm");
+    expect(resolveAuthDestination(clientMismatch)).toBe("/auth/recovery");
   });
 });

@@ -38,7 +38,14 @@ export async function getSession(): Promise<SessionResult> {
 
 export async function requireStaff() {
   const session = await getSession();
-  if (session.state !== "staff" || !session.user || !session.profile || !session.firm || session.issue) {
+  if (
+    session.state !== "staff" ||
+    !session.user ||
+    !session.profile ||
+    !session.firm ||
+    session.profile.firm_id !== session.firm.id ||
+    session.issue
+  ) {
     redirect(resolveAuthDestination(session));
   }
   return {
@@ -68,7 +75,14 @@ export async function requireOwner() {
 
 export async function requireClient() {
   const session = await getSession();
-  if (session.state !== "client" || !session.user || !session.client || !session.firm || session.issue) {
+  if (
+    session.state !== "client" ||
+    !session.user ||
+    !session.client ||
+    !session.firm ||
+    session.client.firm_id !== session.firm.id ||
+    session.issue
+  ) {
     redirect(resolveAuthDestination(session, { requestedNext: "/portal" }));
   }
   return {
