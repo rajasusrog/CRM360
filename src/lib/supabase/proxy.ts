@@ -1,6 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { supabaseCookieOptions } from "@/lib/supabase/options";
+import { CRM_SCHEMA, supabaseCookieOptions, type CrmDatabase } from "@/lib/supabase/options";
 import { supabasePublicConfig } from "@/lib/supabase/public-env";
 
 export async function updateSession(request: NextRequest) {
@@ -10,7 +10,8 @@ export async function updateSession(request: NextRequest) {
   const key = pub.key;
   if (!url || !key) return response;
 
-  const supabase = createServerClient(url, key, {
+  const supabase = createServerClient<CrmDatabase, typeof CRM_SCHEMA>(url, key, {
+    db: { schema: CRM_SCHEMA },
     cookieOptions: supabaseCookieOptions,
     cookies: {
       getAll() {

@@ -1,14 +1,18 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ActionForm, Submit } from "@/components/action-form";
-import { getSession } from "@/lib/session";
+import { getSession, resolveAuthDestination } from "@/lib/session";
 import { acceptInvite } from "@/server/actions/auth";
 
 export default async function JoinPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const session = await getSession();
-  if (!session.user) redirect(`/login?next=/join/${token}`);
-  if (session.profile) redirect("/dashboard");
+  if (session.state === "unauthenticated") {
+    redirect(resolveAuthDestination(session, { requestedNext: `/join/${token}` }));
+  }
+  if (session.state !== "no_membership" || !session.user) {
+    redirect(resolveAuthDestination(session));
+  }
 
   return (
     <main className="mx-auto max-w-lg px-5 py-16">

@@ -1,16 +1,17 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { unstable_rethrow } from "next/navigation";
-import { supabaseCookieOptions } from "@/lib/supabase/options";
+import { CRM_SCHEMA, supabaseCookieOptions, type CrmDatabase } from "@/lib/supabase/options";
 import { supabasePublicConfig } from "@/lib/supabase/public-env";
 
 export async function createClient() {
   const cookieStore = await cookies();
   const { url, key } = supabasePublicConfig();
-  return createServerClient(
+  return createServerClient<CrmDatabase, typeof CRM_SCHEMA>(
     process.env.SUPABASE_INTERNAL_URL || url,
     key,
     {
+      db: { schema: CRM_SCHEMA },
       cookieOptions: supabaseCookieOptions,
       cookies: {
         getAll() {

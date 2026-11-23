@@ -1,8 +1,12 @@
 import { createBrowserClient } from "@supabase/ssr";
-import { supabaseCookieOptions } from "@/lib/supabase/options";
+import { CRM_SCHEMA, supabaseCookieOptions, type CrmDatabase } from "@/lib/supabase/options";
 import { supabasePublicConfig } from "@/lib/supabase/public-env";
 
 export function createBrowserSupabase() {
   const { url, key } = supabasePublicConfig();
-  return createBrowserClient(url, key, { cookieOptions: supabaseCookieOptions, isSingleton: false });
+  return createBrowserClient<CrmDatabase, typeof CRM_SCHEMA>(url, key, {
+    db: { schema: CRM_SCHEMA },
+    cookieOptions: supabaseCookieOptions,
+    isSingleton: false,
+  });
 }

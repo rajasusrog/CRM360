@@ -1,13 +1,17 @@
 import { redirect } from "next/navigation";
 import { ActionForm, Submit } from "@/components/action-form";
-import { getSession } from "@/lib/session";
+import { getSession, resolveAuthDestination } from "@/lib/session";
 import { acceptPortalInvite } from "@/server/actions/auth";
 
 export default async function PortalJoinPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const session = await getSession();
-  if (!session.user) redirect(`/login?next=/portal/join/${token}`);
-  if (session.client) redirect("/portal");
+  if (session.state === "unauthenticated") {
+    redirect(resolveAuthDestination(session, { requestedNext: `/portal/join/${token}` }));
+  }
+  if (session.state !== "no_membership" || !session.user) {
+    redirect(resolveAuthDestination(session));
+  }
 
   return (
     <main className="mx-auto max-w-lg px-5 py-16">

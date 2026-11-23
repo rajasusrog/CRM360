@@ -23,12 +23,12 @@ insert into auth.users (
 ) values
   ('00000000-0000-0000-0000-000000000000', '${userA}', 'authenticated', 'authenticated', 'a-rls@example.test', '', now(), '{}', '{}', now(), now(), '', '', '', ''),
   ('00000000-0000-0000-0000-000000000000', '${userB}', 'authenticated', 'authenticated', 'b-rls@example.test', '', now(), '{}', '{}', now(), now(), '', '', '', '');
-insert into firms (id, name) values ('${firmA}', 'Firm A'), ('${firmB}', 'Firm B');
-insert into profiles (id, firm_id, full_name, email, role) values
+insert into crmpro.firms (id, name) values ('${firmA}', 'Firm A'), ('${firmB}', 'Firm B');
+insert into crmpro.profiles (id, firm_id, full_name, email, role) values
   ('${userA}', '${firmA}', 'Owner A', 'a-rls@example.test', 'owner'),
   ('${userB}', '${firmB}', 'Staff B', 'b-rls@example.test', 'staff');
-insert into leads (firm_id, first_name) values ('${firmA}', 'Only A'), ('${firmB}', 'Only B');
-insert into accounts (firm_id, name, entity_type) values ('${firmB}', 'Secret Co', 'individual');
+insert into crmpro.leads (firm_id, first_name) values ('${firmA}', 'Only A'), ('${firmB}', 'Only B');
+insert into crmpro.accounts (firm_id, name, entity_type) values ('${firmB}', 'Secret Co', 'individual');
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"${userA}","role":"authenticated"}', true);
 select set_config('request.jwt.claim.sub', '${userA}', true);
@@ -38,9 +38,9 @@ describe("row level security", () => {
   it("lets firm A read only its own leads and hides firm B", () => {
     const output = psql(`
       ${setup}
-      select count(*) from leads;
-      select count(*) from leads where first_name = 'Only B';
-      select count(*) from accounts where name = 'Secret Co';
+      select count(*) from crmpro.leads;
+      select count(*) from crmpro.leads where first_name = 'Only B';
+      select count(*) from crmpro.accounts where name = 'Secret Co';
       rollback;
     `);
     const counts = output
@@ -54,7 +54,7 @@ describe("row level security", () => {
     expect(() =>
       psql(`
         ${setup}
-        insert into leads (firm_id, first_name) values ('${firmB}', 'Sneak');
+        insert into crmpro.leads (firm_id, first_name) values ('${firmB}', 'Sneak');
         rollback;
       `),
     ).toThrow(/row-level security policy/);

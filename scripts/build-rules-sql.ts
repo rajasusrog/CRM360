@@ -12,7 +12,7 @@ function textArray(values: string[] | null): string {
 
 const lines: string[] = [
   "-- Generated from src/lib/compliance/rules.ts. Re-run: node --experimental-strip-types scripts/build-rules-sql.ts",
-  "insert into public.compliance_rules (id, firm_id, code, variant, name, frequency, entity_types, gst_frequencies, requires_gstin, audit_mode, state_codes, notes)",
+  "insert into crmpro.compliance_rules (id, firm_id, code, variant, name, frequency, entity_types, gst_frequencies, requires_gstin, audit_mode, state_codes, notes)",
   "values",
 ];
 
@@ -25,7 +25,7 @@ lines.push(
 );
 
 lines.push(
-  "insert into public.compliance_rule_periods (rule_id, period_key, label, start_month, start_year_offset, end_month, end_year_offset, due_month, due_day, due_year_offset, sort)",
+  "insert into crmpro.compliance_rule_periods (rule_id, period_key, label, start_month, start_year_offset, end_month, end_year_offset, due_month, due_day, due_year_offset, sort)",
   "values",
 );
 

@@ -2,14 +2,14 @@ import { redirect } from "next/navigation";
 import { ActionForm, Submit } from "@/components/action-form";
 import { Field, SelectField } from "@/components/kit";
 import { INDIAN_STATES } from "@/lib/constants";
-import { getSession } from "@/lib/session";
+import { getSession, resolveAuthDestination } from "@/lib/session";
 import { createFirm } from "@/server/actions/auth";
 
 export default async function OnboardingPage() {
   const session = await getSession();
-  if (!session.user) redirect("/login");
-  if (session.client) redirect("/portal");
-  if (session.profile) redirect("/dashboard");
+  if (session.state !== "no_membership") {
+    redirect(resolveAuthDestination(session));
+  }
 
   return (
     <main className="mx-auto max-w-xl px-5 py-12">

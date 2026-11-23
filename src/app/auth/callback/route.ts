@@ -1,12 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { createServerClient } from "@supabase/ssr";
-import { supabaseCookieOptions } from "@/lib/supabase/options";
-import { supabasePublicConfig } from "@/lib/supabase/public-env";
-
-function safeNext(value: string | null) {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) return "/dashboard";
-  return value;
-}
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import { resolveAuthDestination, resolveSessionFromClient, safeNextPath } from "@/lib/auth-routing";
+import { CRM_SCHEMA, supabaseCookieOptions, type CrmDatabase } from "@/lib/supabase/options";
+import { getConfiguredAppOrigin, supabasePublicConfig } from "@/lib/supabase/public-env";
 
 function loginRedirect(origin: string, message: string) {
   const login = new URL("/login", origin);
@@ -16,23 +12,32 @@ function loginRedirect(origin: string, message: string) {
 
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);
+  const canonicalOrigin = getConfiguredAppOrigin() || url.origin;
   const code = url.searchParams.get("code");
   const tokenHash = url.searchParams.get("token_hash");
   const type = url.searchParams.get("type");
-  const destination = new URL(safeNext(url.searchParams.get("next")), url.origin);
-  let response = NextResponse.redirect(destination);
-  const { url: supabaseUrl, key } = supabasePublicConfig();
-  if (!supabaseUrl || !key) return loginRedirect(url.origin, "Sign-in is not configured on this deployment.");
+  const validatedNext = safeNextPath(url.searchParams.get("next"), canonicalOrigin);
 
-  const supabase = createServerClient(supabaseUrl, key, {
+  const { url: supabaseUrl, key } = supabasePublicConfig();
+  const effectiveUrl = process.env.SUPABASE_INTERNAL_URL || supabaseUrl;
+  if (!effectiveUrl || !key) {
+    return loginRedirect(canonicalOrigin, "Sign-in is not configured on this deployment.");
+  }
+
+  const cookieMap = new Map(request.cookies.getAll().map((cookie) => [cookie.name, cookie.value]));
+  const pendingCookies: Array<{ name: string; value: string; options: CookieOptions }> = [];
+
+  const supabase = createServerClient<CrmDatabase, typeof CRM_SCHEMA>(effectiveUrl, key, {
+    db: { schema: CRM_SCHEMA },
     cookieOptions: supabaseCookieOptions,
     cookies: {
       getAll() {
-        return request.cookies.getAll();
+        return Array.from(cookieMap.entries()).map(([name, value]) => ({ name, value }));
       },
       setAll(cookiesToSet) {
         for (const { name, value, options } of cookiesToSet) {
-          response.cookies.set(name, value, options);
+          cookieMap.set(name, value);
+          pendingCookies.push({ name, value, options });
         }
       },
     },
@@ -41,18 +46,28 @@ export async function GET(request: NextRequest) {
   try {
     if (code) {
       const { error } = await supabase.auth.exchangeCodeForSession(code);
-      if (error) return loginRedirect(url.origin, error.message);
+      if (error) return loginRedirect(canonicalOrigin, error.message);
     } else if (tokenHash && type) {
       const { error } = await supabase.auth.verifyOtp({
         token_hash: tokenHash,
         type: type as "email" | "magiclink" | "signup" | "invite" | "recovery",
       });
-      if (error) return loginRedirect(url.origin, error.message);
+      if (error) return loginRedirect(canonicalOrigin, error.message);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Sign-in could not be completed.";
-    return loginRedirect(url.origin, message);
+    return loginRedirect(canonicalOrigin, message);
   }
 
+  const session = await resolveSessionFromClient(supabase, true);
+  const destination = resolveAuthDestination(session, {
+    requestedNext: validatedNext,
+    allowedOrigin: canonicalOrigin,
+  });
+
+  const response = NextResponse.redirect(new URL(destination, canonicalOrigin));
+  for (const { name, value, options } of pendingCookies) {
+    response.cookies.set(name, value, options);
+  }
   return response;
 }

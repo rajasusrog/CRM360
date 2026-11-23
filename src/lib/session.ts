@@ -1,95 +1,52 @@
 import { redirect } from "next/navigation";
+import {
+  resolveAuthDestination,
+  resolveSessionFromClient,
+  safeNextPath,
+  type ClientUser,
+  type CrmSupabaseClient,
+  type Firm,
+  type Profile,
+  type SessionIssue,
+  type SessionIssueCode,
+  type SessionResult,
+  type SessionState,
+} from "@/lib/auth-routing";
 import { supabasePublicConfig } from "@/lib/supabase/public-env";
 import { createClient } from "@/lib/supabase/server";
 
-export type Firm = {
-  id: string;
-  name: string;
-  city: string | null;
-  state_code: string;
-  address: string | null;
-  pincode: string | null;
-  phone: string | null;
-  email: string | null;
-  gstin: string | null;
-  pan: string | null;
-  sac_code: string;
-  plan: "starter" | "growth" | "pro";
-  subscription_status: "trialing" | "active" | "past_due" | "cancelled";
-  trial_ends_at: string | null;
-  razorpay_subscription_id: string | null;
+export type {
+  ClientUser,
+  CrmSupabaseClient,
+  Firm,
+  Profile,
+  SessionIssue,
+  SessionIssueCode,
+  SessionResult,
+  SessionState,
 };
+export { resolveAuthDestination, resolveSessionFromClient, safeNextPath };
 
-export type Profile = {
-  id: string;
-  firm_id: string;
-  full_name: string;
-  email: string;
-  phone: string | null;
-  role: "owner" | "partner" | "staff" | "readonly";
-};
-
-export type ClientUser = {
-  id: string;
-  firm_id: string;
-  account_id: string;
-  contact_id: string | null;
-};
-
-export async function getSession() {
+export async function getSession(): Promise<SessionResult> {
   const pub = supabasePublicConfig();
   if (!pub.configured && !process.env.SUPABASE_INTERNAL_URL) {
-    return {
-      supabase: null as unknown as Awaited<ReturnType<typeof createClient>>,
-      user: null,
-      profile: null,
-      firm: null,
-      client: null,
-    };
+    return resolveSessionFromClient(null as unknown as CrmSupabaseClient, false);
   }
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { supabase, user: null, profile: null, firm: null, client: null };
-
-  const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).maybeSingle();
-  if (profile) {
-    const { data: firm } = await supabase.from("firms").select("*").eq("id", profile.firm_id).maybeSingle();
-    return {
-      supabase,
-      user,
-      profile: profile as Profile,
-      firm: firm as Firm | null,
-      client: null,
-    };
-  }
-
-  const { data: client } = await supabase.from("client_users").select("*").eq("id", user.id).maybeSingle();
-  if (client) {
-    const { data: firm } = await supabase.from("firms").select("*").eq("id", client.firm_id).maybeSingle();
-    return {
-      supabase,
-      user,
-      profile: null,
-      firm: firm as Firm | null,
-      client: client as ClientUser,
-    };
-  }
-
-  return { supabase, user, profile: null, firm: null, client: null };
+  return resolveSessionFromClient(supabase, true);
 }
 
 export async function requireStaff() {
   const session = await getSession();
-  if (!session.user) redirect("/login");
-  if (session.client) redirect("/portal");
-  if (!session.profile || !session.firm) redirect("/onboarding");
+  if (session.state !== "staff" || !session.user || !session.profile || !session.firm || session.issue) {
+    redirect(resolveAuthDestination(session));
+  }
   return {
     supabase: session.supabase,
     user: session.user,
     profile: session.profile,
     firm: session.firm,
+    issue: null,
   };
 }
 
@@ -111,7 +68,14 @@ export async function requireOwner() {
 
 export async function requireClient() {
   const session = await getSession();
-  if (!session.user) redirect("/login?next=/portal");
-  if (!session.client || !session.firm) redirect("/dashboard");
-  return { supabase: session.supabase, user: session.user, client: session.client, firm: session.firm };
+  if (session.state !== "client" || !session.user || !session.client || !session.firm || session.issue) {
+    redirect(resolveAuthDestination(session, { requestedNext: "/portal" }));
+  }
+  return {
+    supabase: session.supabase,
+    user: session.user,
+    client: session.client,
+    firm: session.firm,
+    issue: null,
+  };
 }

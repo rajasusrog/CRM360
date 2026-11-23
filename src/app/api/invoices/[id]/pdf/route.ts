@@ -6,6 +6,9 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   const { id } = await context.params;
   const session = await getSession();
   if (!session.user) return new Response("Sign in required", { status: 401 });
+  if (session.issue || (!session.profile && !session.client)) {
+    return new Response(session.issue?.message ?? "Membership required", { status: 403 });
+  }
 
   const supabase = session.client ? createAdmin() : session.supabase;
   const { data: invoice } = await supabase.from("invoices").select("*").eq("id", id).maybeSingle();

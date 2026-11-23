@@ -6,12 +6,13 @@ import { cookies } from "next/headers";
 import { isLocale, type Locale } from "@/lib/i18n";
 import { validateGstin } from "@/lib/gst/gstin";
 import { normalizeIndianMobile } from "@/lib/format";
-import { requireStaff } from "@/lib/session";
+import { getSession, requireStaff, resolveAuthDestination } from "@/lib/session";
+import { CRM_SCHEMA } from "@/lib/supabase/options";
+import { getConfiguredAppOrigin, supabasePublicConfig } from "@/lib/supabase/public-env";
 
 export async function signOut() {
-  const session = await requireStaff().catch(() => null);
-  if (session) await session.supabase.auth.signOut();
-  else {
+  const pub = supabasePublicConfig();
+  if (pub.configured || process.env.SUPABASE_INTERNAL_URL) {
     const { createClient } = await import("@/lib/supabase/server");
     const supabase = await createClient();
     await supabase.auth.signOut();
@@ -25,13 +26,30 @@ export async function setLocale(locale: Locale) {
   jar.set("locale", locale, { path: "/", maxAge: 60 * 60 * 24 * 365 });
 }
 
+export async function resolvePostAuthDestination(nextPath?: string | null) {
+  const session = await getSession();
+  return {
+    destination: resolveAuthDestination(session, {
+      requestedNext: nextPath,
+      allowedOrigin: getConfiguredAppOrigin(),
+    }),
+  };
+}
+
+export async function retrySessionRecovery() {
+  const session = await getSession();
+  if (session.state !== "lookup_failed" && session.state !== "invalid_membership") {
+    redirect(resolveAuthDestination(session));
+  }
+  revalidatePath("/auth/recovery");
+}
+
 export async function createFirm(formData: FormData) {
-  const { createClient } = await import("@/lib/supabase/server");
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const session = await getSession();
+  if (session.state === "unauthenticated") redirect("/login");
+  if (session.state !== "no_membership") {
+    redirect(resolveAuthDestination(session));
+  }
 
   const name = String(formData.get("name") ?? "").trim();
   const city = String(formData.get("city") ?? "").trim();
@@ -45,7 +63,7 @@ export async function createFirm(formData: FormData) {
   }
   if (phoneRaw && !normalizeIndianMobile(phoneRaw)) return { error: "Enter a 10-digit Indian mobile." };
 
-  const { error } = await supabase.schema("app").rpc("create_firm", {
+  const { error } = await session.supabase.schema(CRM_SCHEMA).rpc("crmpro_create_firm", {
     p_name: name,
     p_city: city,
     p_state_code: stateCode,
@@ -57,17 +75,23 @@ export async function createFirm(formData: FormData) {
 }
 
 export async function acceptInvite(token: string) {
-  const { createClient } = await import("@/lib/supabase/server");
-  const supabase = await createClient();
-  const { error } = await supabase.schema("app").rpc("accept_invite", { p_token: token });
+  const session = await getSession();
+  if (session.state === "unauthenticated") redirect(`/login?next=${encodeURIComponent(`/join/${token}`)}`);
+  if (session.state !== "no_membership") {
+    redirect(resolveAuthDestination(session));
+  }
+  const { error } = await session.supabase.schema(CRM_SCHEMA).rpc("crmpro_accept_invite", { p_token: token });
   if (error) return { error: error.message };
   redirect("/dashboard");
 }
 
 export async function acceptPortalInvite(token: string) {
-  const { createClient } = await import("@/lib/supabase/server");
-  const supabase = await createClient();
-  const { error } = await supabase.schema("app").rpc("accept_portal_invite", { p_token: token });
+  const session = await getSession();
+  if (session.state === "unauthenticated") redirect(`/login?next=${encodeURIComponent(`/portal/join/${token}`)}`);
+  if (session.state !== "no_membership") {
+    redirect(resolveAuthDestination(session));
+  }
+  const { error } = await session.supabase.schema(CRM_SCHEMA).rpc("crmpro_accept_portal_invite", { p_token: token });
   if (error) return { error: error.message };
   redirect("/portal");
 }

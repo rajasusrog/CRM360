@@ -12,3 +12,21 @@ export function supabasePublicConfig() {
     "";
   return { url, key, configured: Boolean(url && key) };
 }
+
+export function getConfiguredAppOrigin(): string | null {
+  const raw = (process.env.NEXT_PUBLIC_APP_URL || "").trim();
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      return parsed.origin;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+export function isDemoModeEnabled(): boolean {
+  return process.env.NEXT_PUBLIC_DEMO_MODE === "true";
+}
