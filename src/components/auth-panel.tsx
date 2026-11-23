@@ -69,7 +69,7 @@ export function AuthPanel({
   function callbackUrl() {
     // Sign-in must start and finish on the same origin so the host-only PKCE verifier cookie reaches /auth/callback.
     const origin =
-      typeof window !== "undefined" ? window.location.origin : appOrigin || "https://crmpro360.unikorn360.com";
+      typeof window !== "undefined" ? window.location.origin : appOrigin || "https://crm360.unikorn360.com";
     return new URL("/auth/callback", origin).toString();
   }
 

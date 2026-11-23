@@ -18,7 +18,7 @@ const values = {
   NEXT_PUBLIC_APP_URL:
     first(["NEXT_PUBLIC_APP_URL"]) ||
     (first(["NEXT_PUBLIC_SUPABASE_URL", "SUPABASE_URL", "VITE_SUPABASE_URL", "WORKERS_CI", "CF_PAGES"])
-      ? "https://crmpro360.unikorn360.com"
+      ? "https://crm360.unikorn360.com"
       : ""),
   NEXT_PUBLIC_DEMO_MODE: first(["NEXT_PUBLIC_DEMO_MODE"]),
   SUPABASE_SERVICE_ROLE_KEY: first(["SUPABASE_SERVICE_ROLE_KEY"]),

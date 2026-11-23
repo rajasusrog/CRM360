@@ -296,14 +296,14 @@ describe("getSession and auth routing", () => {
   });
 
   it("rejects open redirects and auth-loop paths in safeNextPath", () => {
-    expect(safeNextPath("https://evil.com/dashboard", "https://crmpro360.unikorn360.com")).toBeNull();
-    expect(safeNextPath("//evil.com/dashboard", "https://crmpro360.unikorn360.com")).toBeNull();
+    expect(safeNextPath("https://evil.com/dashboard", "https://crm360.unikorn360.com")).toBeNull();
+    expect(safeNextPath("//evil.com/dashboard", "https://crm360.unikorn360.com")).toBeNull();
     expect(safeNextPath("/\\evil.com")).toBeNull();
     expect(safeNextPath("javascript:alert(1)")).toBeNull();
     expect(safeNextPath("/login?next=/dashboard")).toBeNull();
     expect(safeNextPath("/auth/recovery")).toBeNull();
     expect(safeNextPath("/auth/callback?code=123")).toBeNull();
-    expect(safeNextPath("https://crmpro360.unikorn360.com/deals?view=mine", "https://crmpro360.unikorn360.com")).toBe(
+    expect(safeNextPath("https://crm360.unikorn360.com/deals?view=mine", "https://crm360.unikorn360.com")).toBe(
       "/deals?view=mine",
     );
     expect(safeNextPath("/clients/123")).toBe("/clients/123");
@@ -366,9 +366,9 @@ describe("GET /auth/continue", () => {
       }),
     );
 
-    const response = await continueGet(new NextRequest("https://crmpro360.unikorn360.com/auth/continue"));
+    const response = await continueGet(new NextRequest("https://crm360.unikorn360.com/auth/continue"));
     expect(response.status).toBe(307);
-    expect(response.headers.get("location")).toBe("https://crmpro360.unikorn360.com/login");
+    expect(response.headers.get("location")).toBe("https://crm360.unikorn360.com/login");
     expect(response.headers.get("cache-control")).toBe("no-store");
   });
 
@@ -383,24 +383,24 @@ describe("GET /auth/continue", () => {
       }),
     );
 
-    const defaultRes = await continueGet(new NextRequest("https://crmpro360.unikorn360.com/auth/continue"));
-    expect(defaultRes.headers.get("location")).toBe("https://crmpro360.unikorn360.com/dashboard");
+    const defaultRes = await continueGet(new NextRequest("https://crm360.unikorn360.com/auth/continue"));
+    expect(defaultRes.headers.get("location")).toBe("https://crm360.unikorn360.com/dashboard");
     expect(defaultRes.headers.get("cache-control")).toBe("no-store");
 
-    const nextRes = await continueGet(new NextRequest("https://crmpro360.unikorn360.com/auth/continue?next=/deals"));
-    expect(nextRes.headers.get("location")).toBe("https://crmpro360.unikorn360.com/deals");
+    const nextRes = await continueGet(new NextRequest("https://crm360.unikorn360.com/auth/continue?next=/deals"));
+    expect(nextRes.headers.get("location")).toBe("https://crm360.unikorn360.com/deals");
     expect(nextRes.headers.get("cache-control")).toBe("no-store");
 
     const evilRes = await continueGet(
-      new NextRequest("https://crmpro360.unikorn360.com/auth/continue?next=https://evil.com/phish"),
+      new NextRequest("https://crm360.unikorn360.com/auth/continue?next=https://evil.com/phish"),
     );
-    expect(evilRes.headers.get("location")).toBe("https://crmpro360.unikorn360.com/dashboard");
+    expect(evilRes.headers.get("location")).toBe("https://crm360.unikorn360.com/dashboard");
     expect(evilRes.headers.get("cache-control")).toBe("no-store");
 
     const loopRes = await continueGet(
-      new NextRequest("https://crmpro360.unikorn360.com/auth/continue?next=/auth/continue"),
+      new NextRequest("https://crm360.unikorn360.com/auth/continue?next=/auth/continue"),
     );
-    expect(loopRes.headers.get("location")).toBe("https://crmpro360.unikorn360.com/dashboard");
+    expect(loopRes.headers.get("location")).toBe("https://crm360.unikorn360.com/dashboard");
   });
 
   it("redirects verified client users to /portal and no_membership users to /onboarding with no-store", async () => {
@@ -414,8 +414,8 @@ describe("GET /auth/continue", () => {
       }),
     );
 
-    const clientRes = await continueGet(new NextRequest("https://crmpro360.unikorn360.com/auth/continue?next=/dashboard"));
-    expect(clientRes.headers.get("location")).toBe("https://crmpro360.unikorn360.com/portal");
+    const clientRes = await continueGet(new NextRequest("https://crm360.unikorn360.com/auth/continue?next=/dashboard"));
+    expect(clientRes.headers.get("location")).toBe("https://crm360.unikorn360.com/portal");
     expect(clientRes.headers.get("cache-control")).toBe("no-store");
 
     mockCreateClient.mockResolvedValue(
@@ -427,8 +427,8 @@ describe("GET /auth/continue", () => {
       }),
     );
 
-    const onboardRes = await continueGet(new NextRequest("https://crmpro360.unikorn360.com/auth/continue"));
-    expect(onboardRes.headers.get("location")).toBe("https://crmpro360.unikorn360.com/onboarding");
+    const onboardRes = await continueGet(new NextRequest("https://crm360.unikorn360.com/auth/continue"));
+    expect(onboardRes.headers.get("location")).toBe("https://crm360.unikorn360.com/onboarding");
     expect(onboardRes.headers.get("cache-control")).toBe("no-store");
   });
 
@@ -442,8 +442,8 @@ describe("GET /auth/continue", () => {
       }),
     );
 
-    const failedRes = await continueGet(new NextRequest("https://crmpro360.unikorn360.com/auth/continue"));
-    expect(failedRes.headers.get("location")).toBe("https://crmpro360.unikorn360.com/auth/recovery");
+    const failedRes = await continueGet(new NextRequest("https://crm360.unikorn360.com/auth/continue"));
+    expect(failedRes.headers.get("location")).toBe("https://crm360.unikorn360.com/auth/recovery");
     expect(failedRes.headers.get("cache-control")).toBe("no-store");
 
     mockCreateClient.mockResolvedValue(
@@ -456,8 +456,8 @@ describe("GET /auth/continue", () => {
       }),
     );
 
-    const missingFirmRes = await continueGet(new NextRequest("https://crmpro360.unikorn360.com/auth/continue"));
-    expect(missingFirmRes.headers.get("location")).toBe("https://crmpro360.unikorn360.com/auth/recovery");
+    const missingFirmRes = await continueGet(new NextRequest("https://crm360.unikorn360.com/auth/continue"));
+    expect(missingFirmRes.headers.get("location")).toBe("https://crm360.unikorn360.com/auth/recovery");
     expect(missingFirmRes.headers.get("cache-control")).toBe("no-store");
   });
 });

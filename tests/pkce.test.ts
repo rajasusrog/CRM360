@@ -53,7 +53,7 @@ describe("PKCE cookie options, browser/server handoff, and proxy isolation", () 
     vi.restoreAllMocks();
     process.env.NEXT_PUBLIC_SUPABASE_URL = "https://project-ref.supabase.co";
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-public-key";
-    process.env.NEXT_PUBLIC_APP_URL = "https://crmpro360.unikorn360.com";
+    process.env.NEXT_PUBLIC_APP_URL = "https://crm360.unikorn360.com";
     delete process.env.SUPABASE_INTERNAL_URL;
   });
 
@@ -72,8 +72,8 @@ describe("PKCE cookie options, browser/server handoff, and proxy isolation", () 
     expect(supabaseCookieOptions.sameSite).toBe("lax");
     expect(supabaseCookieOptions.httpOnly).toBe(false);
     expect("domain" in supabaseCookieOptions).toBe(false);
-    expect(getConfiguredAppOrigin()).toBe("https://crmpro360.unikorn360.com");
-    expect(isLocalOrPreviewHost("crmpro360.unikorn360.com")).toBe(false);
+    expect(getConfiguredAppOrigin()).toBe("https://crm360.unikorn360.com");
+    expect(isLocalOrPreviewHost("crm360.unikorn360.com")).toBe(false);
     expect(isLocalOrPreviewHost("127.0.0.1")).toBe(true);
     expect(isLocalOrPreviewHost("localhost")).toBe(true);
   });
@@ -101,7 +101,7 @@ describe("PKCE cookie options, browser/server handoff, and proxy isolation", () 
     (globalThis as { document?: unknown }).document = doc;
     (globalThis as { window?: unknown }).window = {
       document: doc,
-      location: { origin: "https://crmpro360.unikorn360.com", href: "https://crmpro360.unikorn360.com/login" },
+      location: { origin: "https://crm360.unikorn360.com", href: "https://crm360.unikorn360.com/login" },
     };
 
     const tokenExchanges: Array<{ url: string; body: Record<string, unknown> }> = [];
@@ -190,13 +190,13 @@ describe("PKCE cookie options, browser/server handoff, and proxy isolation", () 
     const { data, error } = await browserA.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: "https://crmpro360.unikorn360.com/auth/callback",
+        redirectTo: "https://crm360.unikorn360.com/auth/callback",
         skipBrowserRedirect: true,
       },
     });
     expect(error).toBeNull();
     expect(data.url).toContain("code_challenge=");
-    expect(data.url).toContain("redirect_to=https%3A%2F%2Fcrmpro360.unikorn360.com%2Fauth%2Fcallback");
+    expect(data.url).toContain("redirect_to=https%3A%2F%2Fcrm360.unikorn360.com%2Fauth%2Fcallback");
 
     // Step 2: Verifier cookie is present, Path=/, SameSite=Lax, and host-only (no Domain=)
     const verifierEntries = jar.rawEntries.filter((entry) => isPkceVerifierCookieName(entry.name));
@@ -213,7 +213,7 @@ describe("PKCE cookie options, browser/server handoff, and proxy isolation", () 
     if (originalDocument === undefined) delete (globalThis as { document?: unknown }).document;
     else (globalThis as { document?: unknown }).document = originalDocument;
 
-    const callbackReq = new NextRequest("https://crmpro360.unikorn360.com/auth/callback?code=auth-code-xyz", {
+    const callbackReq = new NextRequest("https://crm360.unikorn360.com/auth/callback?code=auth-code-xyz", {
       headers: {
         cookie: `${jar.cookieHeader}; sb-unikorn360-auth=stale-invalid-session; ${AUTH_NEXT_COOKIE}=${encodeURIComponent("/deals")}`,
       },
@@ -228,7 +228,7 @@ describe("PKCE cookie options, browser/server handoff, and proxy isolation", () 
     expect(typeof tokenExchanges[0].body.code_verifier).toBe("string");
     expect((tokenExchanges[0].body.code_verifier as string).length).toBeGreaterThan(20);
     expect(response.status).toBe(307);
-    expect(response.headers.get("location")).toBe("https://crmpro360.unikorn360.com/deals");
+    expect(response.headers.get("location")).toBe("https://crm360.unikorn360.com/deals");
     expect(response.headers.get("cache-control")).toBe("no-store");
   });
 
@@ -236,12 +236,12 @@ describe("PKCE cookie options, browser/server handoff, and proxy isolation", () 
     const fetchSpy = vi.fn();
     globalThis.fetch = fetchSpy as unknown as typeof fetch;
 
-    const req = new NextRequest("https://crmpro360.unikorn360.com/auth/callback?code=auth-code-missing-cookie");
+    const req = new NextRequest("https://crm360.unikorn360.com/auth/callback?code=auth-code-missing-cookie");
     const response = await callbackGet(req);
 
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(response.status).toBe(307);
     expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(response.headers.get("location")).toContain("https://crmpro360.unikorn360.com/login?error=");
+    expect(response.headers.get("location")).toContain("https://crm360.unikorn360.com/login?error=");
   });
 });

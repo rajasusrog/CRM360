@@ -21,8 +21,13 @@ export default async function LoginPage({
     const proto = (reqHeaders.get("x-forwarded-proto") || "https").split(",")[0]?.trim() || "https";
     const hostname = host.split(":")[0] ?? "";
     if (host && !isLocalOrPreviewHost(hostname)) {
-      const requestOrigin = `${proto}://${host}`;
-      if (requestOrigin !== configuredOrigin) {
+      let requestOrigin = "";
+      try {
+        requestOrigin = new URL(`${proto}://${host}`).origin;
+      } catch {
+        requestOrigin = "";
+      }
+      if (requestOrigin && requestOrigin !== configuredOrigin) {
         const target = new URL("/login", configuredOrigin);
         const safeNext = safeNextPath(params.next, configuredOrigin);
         if (safeNext) target.searchParams.set("next", safeNext);
