@@ -152,6 +152,18 @@ The Worker build already has `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_
 
 `npm run preview:cf` builds and opens a local Workers preview.
 
+## AI Copilot (Gemini)
+
+1. Apply the additive migration `supabase/migrations/20261123100000_ai_copilot.sql` to Supabase (`crmpro.ai_firm_settings`, `crmpro.ai_usage_events`, `crmpro.ai_task_batches`, `crmpro.ai_feedback` with RLS enabled).
+2. Configure server-only Cloudflare Worker secrets/variables on `crmpro360`:
+   - `GEMINI_API_KEY` (Worker secret via `npx wrangler secret put GEMINI_API_KEY` or Cloudflare Dashboard Secrets — never prefix with `NEXT_PUBLIC_`)
+   - `GEMINI_MODEL` (optional, defaults to `gemini-4-hydrogen`)
+3. In the CRM under **Settings → AI Copilot**, an `owner` or `partner` must review the external AI notice and enable AI Copilot for the firm before staff can generate briefings, English/Tamil follow-up drafts, or extract tasks from notes.
+4. Optional synthetic smoke test (does not touch production records):
+   ```bash
+   GEMINI_API_KEY=... node --experimental-strip-types scripts/smoke-ai-copilot.ts
+   ```
+
 ## Useful paths
 
 | Path | What it is |

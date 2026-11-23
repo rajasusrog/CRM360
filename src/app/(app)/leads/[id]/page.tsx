@@ -1,6 +1,10 @@
 import { notFound } from "next/navigation";
 import { ActionForm, Submit } from "@/components/action-form";
+import { FollowUpDraftPanel } from "@/components/ai/follow-up-draft-panel";
+import { NotesToTasksPanel } from "@/components/ai/notes-to-tasks-panel";
 import { Field, SelectField, TextAreaField } from "@/components/kit";
+import { canUseAiCopilot } from "@/lib/ai/config";
+import { getFirmAiStatus } from "@/lib/ai/gateway";
 import { ENTITY_TYPES, LEAD_SOURCES, LEAD_STATUSES } from "@/lib/constants";
 import { formatDateTime, formatIndianMobile, whatsAppLink } from "@/lib/format";
 import { requireStaff } from "@/lib/session";
@@ -11,8 +15,22 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
   const session = await requireStaff();
   const { data: lead } = await session.supabase.from("leads").select("*").eq("id", id).maybeSingle();
   if (!lead) notFound();
-  const { data: staff } = await session.supabase.from("profiles").select("id, full_name").eq("firm_id", session.firm.id);
+  const [{ data: staff }, { data: leadActivities }, aiStatus] = await Promise.all([
+    session.supabase.from("profiles").select("id, full_name, role").eq("firm_id", session.firm.id),
+    session.supabase
+      .from("activities")
+      .select("id, type, subject")
+      .eq("firm_id", session.firm.id)
+      .eq("related_type", "lead")
+      .eq("related_id", id)
+      .order("created_at", { ascending: false })
+      .limit(8),
+    getFirmAiStatus(session.supabase, session.firm),
+  ]);
   const canWrite = session.profile.role !== "readonly";
+  const canUseAi = canUseAiCopilot(session.profile.role);
+  const aiStaff = (staff ?? []).filter((person) => person.role !== "readonly");
+  const leadDisplayName = `${lead.first_name} ${lead.last_name ?? ""}`.trim();
   const wa = lead.phone ? whatsAppLink(lead.phone, `Hello ${lead.first_name}, this is ${session.firm.name}.`) : null;
 
   return (
@@ -59,6 +77,27 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
             <input type="hidden" name="id" value={lead.id} />
             <button className="text-sm text-destructive underline" type="submit">Delete lead</button>
           </form>
+        </div>
+      ) : null}
+      {canUseAi ? (
+        <div className="mt-6 grid gap-6">
+          <FollowUpDraftPanel
+            entityType="lead"
+            entityId={lead.id}
+            entityName={leadDisplayName}
+            activities={leadActivities ?? []}
+            recipientEmail={lead.email}
+            recipientPhone={lead.phone}
+            aiEnabled={aiStatus.enabled}
+            canUseAi={canUseAi}
+          />
+          <NotesToTasksPanel
+            relatedType="lead"
+            relatedId={lead.id}
+            staff={aiStaff}
+            aiEnabled={aiStatus.enabled}
+            canUseAi={canUseAi}
+          />
         </div>
       ) : null}
     </div>

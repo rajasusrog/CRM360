@@ -1,10 +1,12 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { canManageAiSettings } from "@/lib/ai/config";
+import { isMissingTableError } from "@/lib/ai/gateway";
 import { PLANS, featuresFor, isPlanId, type PlanId } from "@/lib/plans";
 import { validateGstin } from "@/lib/gst/gstin";
 import { normalizeIndianMobile } from "@/lib/format";
-import { requireOwner, requireStaff, requireWriter } from "@/lib/session";
+import { requireOwner, requireWriter } from "@/lib/session";
 import { createAdmin } from "@/lib/supabase/admin";
 
 function text(formData: FormData, key: string) {
@@ -288,3 +290,47 @@ export async function applyRazorpayEvent(payload: { event?: string; payload?: { 
   if (!mapped) return;
   await admin.from("firms").update({ subscription_status: mapped, razorpay_subscription_id: subscription.id }).eq("id", firmId);
 }
+
+export async function updateAiSettings(formData: FormData) {
+  const session = await requireWriter();
+  if (session.error) return { error: session.error };
+  if (!canManageAiSettings(session.profile.role)) {
+    return { error: "Only the firm owner or a partner can manage AI Copilot settings." };
+  }
+
+  const enabled = formData.get("enabled") === "on";
+  const noticeAccepted = formData.get("notice_accepted") === "on";
+  if (enabled && !noticeAccepted) {
+    return { error: "Accept the external AI provider notice before enabling AI Copilot." };
+  }
+
+  const nowIso = new Date().toISOString();
+  const { error } = await session.supabase.from("ai_firm_settings").upsert(
+    {
+      firm_id: session.firm.id,
+      enabled,
+      notice_accepted_at: enabled ? nowIso : null,
+      notice_accepted_by: enabled ? session.profile.id : null,
+      updated_at: nowIso,
+    },
+    { onConflict: "firm_id" },
+  );
+
+  if (error) {
+    if (isMissingTableError(error)) {
+      return { error: "Apply the AI Copilot database migration before saving this setting." };
+    }
+    return { error: error.message };
+  }
+
+  revalidatePath("/settings");
+  revalidatePath("/activities");
+  revalidatePath("/clients");
+  revalidatePath("/leads");
+  return {
+    ok: enabled
+      ? "AI Copilot is enabled for this firm."
+      : "AI Copilot is disabled for this firm.",
+  };
+}
+

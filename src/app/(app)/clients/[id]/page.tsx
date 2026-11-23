@@ -1,7 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ActionForm, Submit } from "@/components/action-form";
+import { CustomerBriefingPanel } from "@/components/ai/customer-briefing-panel";
+import { FollowUpDraftPanel } from "@/components/ai/follow-up-draft-panel";
+import { NotesToTasksPanel } from "@/components/ai/notes-to-tasks-panel";
 import { CheckField, Field, SelectField, TextAreaField } from "@/components/kit";
+import { canUseAiCopilot } from "@/lib/ai/config";
+import { getFirmAiStatus } from "@/lib/ai/gateway";
 import { ENTITY_TYPES, INDIAN_STATES, entityLabel, stateName } from "@/lib/constants";
 import { formatDate, formatInr, formatIndianMobile, todayIsoInIst, whatsAppLink } from "@/lib/format";
 import { validateGstin } from "@/lib/gst/gstin";
@@ -17,15 +22,24 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
   const canWrite = session.profile.role !== "readonly";
   const { data: account } = await session.supabase.from("accounts").select("*").eq("id", id).maybeSingle();
   if (!account) notFound();
-  const [filings, documents, requests, invoices, time, engagements, staff, templates] = await Promise.all([
+  const [filings, documents, requests, invoices, time, engagements, staff, templates, activitiesRes, aiStatus] = await Promise.all([
     session.supabase.from("compliance_filings").select("id, name, period_label, due_date, status").eq("account_id", id).order("due_date").limit(12),
     session.supabase.from("documents").select("id, name, folder, financial_year, client_visible").eq("account_id", id).order("created_at", { ascending: false }),
     session.supabase.from("document_requests").select("id, title, status, upload_token, financial_year").eq("account_id", id),
     session.supabase.from("invoices").select("id, invoice_number, total, status, invoice_date").eq("account_id", id).order("invoice_date", { ascending: false }),
     session.supabase.from("time_entries").select("id, work_date, minutes, description, profiles(full_name)").eq("account_id", id).order("work_date", { ascending: false }).limit(8),
     session.supabase.from("engagements").select("*").eq("account_id", id),
-    session.supabase.from("profiles").select("id, full_name").eq("firm_id", session.firm.id),
+    session.supabase.from("profiles").select("id, full_name, role").eq("firm_id", session.firm.id),
     session.supabase.from("message_templates").select("*").eq("firm_id", session.firm.id).eq("channel", "whatsapp").limit(1),
+    session.supabase
+      .from("activities")
+      .select("id, type, subject")
+      .eq("firm_id", session.firm.id)
+      .eq("related_type", "account")
+      .eq("related_id", id)
+      .order("created_at", { ascending: false })
+      .limit(8),
+    getFirmAiStatus(session.supabase, session.firm),
   ]);
   const gstin = account.gstin ? validateGstin(account.gstin) : null;
   const today = todayIsoInIst();
@@ -34,6 +48,8 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
     ? whatsAppLink(account.phone, renderTemplate(template.body, { name: account.name, firm_name: session.firm.name, filing: "GSTR-3B", period: "this month", due_date: "the due date" }))
     : null;
   const plan = featuresFor(session.firm);
+  const canUseAi = canUseAiCopilot(session.profile.role);
+  const aiStaff = (staff.data ?? []).filter((person) => person.role !== "readonly");
 
   return (
     <div className="grid gap-6">
@@ -51,6 +67,31 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
           <Link className="underline" href={`/invoices`}>Raise invoice</Link>
         </div>
       </header>
+      <CustomerBriefingPanel
+        accountId={account.id}
+        accountName={account.name}
+        aiEnabled={aiStatus.enabled}
+        canUseAi={canUseAi}
+      />
+      <section className="grid gap-4 lg:grid-cols-2">
+        <FollowUpDraftPanel
+          entityType="account"
+          entityId={account.id}
+          entityName={account.name}
+          activities={activitiesRes.data ?? []}
+          recipientEmail={account.email}
+          recipientPhone={account.phone}
+          aiEnabled={aiStatus.enabled}
+          canUseAi={canUseAi}
+        />
+        <NotesToTasksPanel
+          relatedType="account"
+          relatedId={account.id}
+          staff={aiStaff}
+          aiEnabled={aiStatus.enabled}
+          canUseAi={canUseAi}
+        />
+      </section>
       <section className="grid gap-4 lg:grid-cols-2">
         <div className="rounded-xl bg-card p-4 ring-1 ring-foreground/10">
           <h2 className="font-display text-2xl">Upcoming and open filings</h2>

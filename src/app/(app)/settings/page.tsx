@@ -1,5 +1,7 @@
 import { ActionForm, Submit } from "@/components/action-form";
-import { Field, PageHeader, Panel, SelectField, TextAreaField } from "@/components/kit";
+import { CheckField, Field, PageHeader, Panel, SelectField, TextAreaField } from "@/components/kit";
+import { AI_EXTERNAL_NOTICE, canManageAiSettings } from "@/lib/ai/config";
+import { getFirmAiStatus } from "@/lib/ai/gateway";
 import { INDIAN_STATES, SAC_CODES } from "@/lib/constants";
 import { formatDateTime, formatInr } from "@/lib/format";
 import { PLANS, featuresFor } from "@/lib/plans";
@@ -15,6 +17,7 @@ import {
   renameStage,
   startSubscription,
   toggleWorkflow,
+  updateAiSettings,
   updateFirm,
 } from "@/server/actions/settings";
 
@@ -22,7 +25,7 @@ export default async function SettingsPage() {
   const session = await requireStaff();
   const canManage = session.profile.role === "owner" || session.profile.role === "partner";
   const plan = featuresFor(session.firm);
-  const [staff, invites, stages, fields, workflows, templates, forms, audits, messages] = await Promise.all([
+  const [staff, invites, stages, fields, workflows, templates, forms, audits, messages, aiStatus] = await Promise.all([
     session.supabase.from("profiles").select("id, full_name, email, role").eq("firm_id", session.firm.id).order("full_name"),
     session.supabase.from("invitations").select("email, role, token, accepted_at").eq("firm_id", session.firm.id).is("accepted_at", null),
     session.supabase.from("pipeline_stages").select("*").eq("firm_id", session.firm.id).order("position"),
@@ -32,9 +35,11 @@ export default async function SettingsPage() {
     session.supabase.from("web_forms").select("name, public_key").eq("firm_id", session.firm.id),
     session.supabase.from("audit_logs").select("action, entity_type, created_at").eq("firm_id", session.firm.id).order("created_at", { ascending: false }).limit(12),
     session.supabase.from("outbound_messages").select("channel, recipient, status, created_at").eq("firm_id", session.firm.id).order("created_at", { ascending: false }).limit(5),
+    getFirmAiStatus(session.supabase, session.firm),
   ]);
   const seats = staff.data?.length ?? 0;
   const origin = process.env.NEXT_PUBLIC_APP_URL || "http://127.0.0.1:3000";
+  const canManageAi = canManageAiSettings(session.profile.role);
 
   return (
     <div className="grid gap-6">
@@ -230,6 +235,42 @@ export default async function SettingsPage() {
               <Submit>Save override</Submit>
             </ActionForm>
           ) : <p className="mt-2 text-sm">Only the owner edits due dates.</p>}
+        </Panel>
+        <Panel>
+          <h2 className="font-display text-2xl">AI Copilot</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Status: {aiStatus.enabled ? "Enabled" : "Disabled"} ·{" "}
+            <span className="tabular-nums">
+              {aiStatus.usedToday} / {aiStatus.dailyQuota}
+            </span>{" "}
+            requests today ({plan.name} plan) · Model {aiStatus.model}
+          </p>
+          {!aiStatus.schemaReady ? (
+            <p className="mt-2 text-xs text-destructive">
+              AI database tables are missing. Apply the latest Supabase migration before enabling AI Copilot.
+            </p>
+          ) : null}
+          {!aiStatus.providerConfigured ? (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Server AI provider key is not configured yet. Features stay unavailable until GEMINI_API_KEY is set on the Worker.
+            </p>
+          ) : null}
+          <p className="mt-3 rounded-lg border border-border bg-muted/40 p-3 text-xs leading-relaxed text-muted-foreground">
+            {AI_EXTERNAL_NOTICE}
+          </p>
+          {canManageAi ? (
+            <ActionForm action={updateAiSettings} className="mt-3">
+              <CheckField label="Enable AI Copilot for firm staff" name="enabled" defaultChecked={aiStatus.enabled} />
+              <CheckField
+                label="I confirm this firm has reviewed and accepts the external AI provider notice above"
+                name="notice_accepted"
+                defaultChecked={Boolean(aiStatus.noticeAcceptedAt)}
+              />
+              <Submit>Save AI setting</Submit>
+            </ActionForm>
+          ) : (
+            <p className="mt-2 text-sm text-muted-foreground">Only a partner or the firm owner changes AI Copilot settings.</p>
+          )}
         </Panel>
         <Panel className="lg:col-span-2">
           <div className="flex items-center justify-between">

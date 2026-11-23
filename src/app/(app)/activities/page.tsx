@@ -1,5 +1,8 @@
 import { ActionForm, Submit } from "@/components/action-form";
+import { NotesToTasksPanel } from "@/components/ai/notes-to-tasks-panel";
 import { Field, PageHeader, SelectField, TextAreaField } from "@/components/kit";
+import { canUseAiCopilot } from "@/lib/ai/config";
+import { getFirmAiStatus } from "@/lib/ai/gateway";
 import { formatDateTime, todayIsoInIst } from "@/lib/format";
 import { requireStaff } from "@/lib/session";
 import { completeActivity, createActivity } from "@/server/actions/crm";
@@ -7,14 +10,17 @@ import { completeActivity, createActivity } from "@/server/actions/crm";
 export default async function ActivitiesPage() {
   const session = await requireStaff();
   const canWrite = session.profile.role !== "readonly";
+  const canUseAi = canUseAiCopilot(session.profile.role);
   const today = todayIsoInIst();
-  const [{ data: activities }, { data: staff }] = await Promise.all([
+  const [{ data: activities }, { data: staff }, aiStatus] = await Promise.all([
     session.supabase.from("activities").select("*").eq("firm_id", session.firm.id).order("due_at", { ascending: true, nullsFirst: false }).limit(40),
-    session.supabase.from("profiles").select("id, full_name").eq("firm_id", session.firm.id),
+    session.supabase.from("profiles").select("id, full_name, role").eq("firm_id", session.firm.id),
+    getFirmAiStatus(session.supabase, session.firm),
   ]);
+  const aiStaff = (staff ?? []).filter((person) => person.role !== "readonly");
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[1fr_300px]">
+    <div className="grid gap-6 lg:grid-cols-[1fr_400px]">
       <div>
         <PageHeader eyebrow="Follow-up" title="Activities" lede="Tasks, calls, meetings, and notes. Overdue tasks stay marked until someone completes them." />
         <ul className="divide-y divide-border rounded-xl bg-card ring-1 ring-foreground/10">
@@ -43,22 +49,29 @@ export default async function ActivitiesPage() {
         </ul>
       </div>
       {canWrite ? (
-        <ActionForm action={createActivity} className="h-fit rounded-xl bg-card p-4 ring-1 ring-foreground/10">
-          <p className="font-display text-2xl">Add</p>
-          <SelectField label="Type" name="type" defaultValue="task">
-            <option value="task">Task</option>
-            <option value="call">Call</option>
-            <option value="meeting">Meeting</option>
-            <option value="note">Note</option>
-          </SelectField>
-          <Field label="Subject" name="subject" required />
-          <TextAreaField label="Detail" name="body" />
-          <Field label="Due" name="due_at" type="datetime-local" />
-          <SelectField label="Owner" name="owner_id" defaultValue={session.profile.id}>
-            {(staff ?? []).map((person) => <option key={person.id} value={person.id}>{person.full_name}</option>)}
-          </SelectField>
-          <Submit>Save activity</Submit>
-        </ActionForm>
+        <div className="grid h-fit gap-6">
+          <ActionForm action={createActivity} className="h-fit rounded-xl bg-card p-4 ring-1 ring-foreground/10">
+            <p className="font-display text-2xl">Add</p>
+            <SelectField label="Type" name="type" defaultValue="task">
+              <option value="task">Task</option>
+              <option value="call">Call</option>
+              <option value="meeting">Meeting</option>
+              <option value="note">Note</option>
+            </SelectField>
+            <Field label="Subject" name="subject" required />
+            <TextAreaField label="Detail" name="body" />
+            <Field label="Due" name="due_at" type="datetime-local" />
+            <SelectField label="Owner" name="owner_id" defaultValue={session.profile.id}>
+              {(staff ?? []).map((person) => <option key={person.id} value={person.id}>{person.full_name}</option>)}
+            </SelectField>
+            <Submit>Save activity</Submit>
+          </ActionForm>
+          <NotesToTasksPanel
+            staff={aiStaff}
+            aiEnabled={aiStatus.enabled}
+            canUseAi={canUseAi}
+          />
+        </div>
       ) : null}
     </div>
   );
