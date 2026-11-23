@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { sessionDestination } from "@/lib/auth-routing";
 
 export type Firm = {
   id: string;
@@ -37,43 +38,67 @@ export type ClientUser = {
 
 export async function getSession() {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { supabase, user: null, profile: null, firm: null, client: null };
+  const empty = { supabase, user: null, profile: null, firm: null, client: null, issue: null as string | null };
+  try {
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
+    if (authError) {
+      if (authError.name === "AuthSessionMissingError" || authError.status === 400 || authError.status === 401 || authError.status === 403) return empty;
+      console.error("Session lookup failed", { stage: "auth", code: authError.code });
+      return { ...empty, issue: "auth_unavailable" };
+    }
+    if (!user) return empty;
 
-  const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).maybeSingle();
-  if (profile) {
-    const { data: firm } = await supabase.from("firms").select("*").eq("id", profile.firm_id).maybeSingle();
-    return {
-      supabase,
-      user,
-      profile: profile as Profile,
-      firm: firm as Firm | null,
-      client: null,
-    };
+    const { data: profile, error: profileError } = await supabase.from("profiles").select("*").eq("id", user.id).maybeSingle();
+    if (profileError) {
+      console.error("Session lookup failed", { stage: "profile", code: profileError.code });
+      return { ...empty, user, issue: "profile_unavailable" };
+    }
+    if (profile) {
+      const { data: firm, error: firmError } = await supabase.from("firms").select("*").eq("id", profile.firm_id).maybeSingle();
+      if (firmError || !firm) console.error("Session lookup failed", { stage: "firm", code: firmError?.code ?? "not_visible" });
+      return {
+        supabase,
+        user,
+        profile: profile as Profile,
+        firm: firm as Firm | null,
+        client: null,
+        issue: firmError || !firm ? "firm_unavailable" : null,
+      };
+    }
+
+    const { data: client, error: clientError } = await supabase.from("client_users").select("*").eq("id", user.id).maybeSingle();
+    if (clientError) {
+      console.error("Session lookup failed", { stage: "client", code: clientError.code });
+      return { ...empty, user, issue: "membership_unavailable" };
+    }
+    if (client) {
+      const { data: firm, error: firmError } = await supabase.from("firms").select("*").eq("id", client.firm_id).maybeSingle();
+      if (firmError || !firm) console.error("Session lookup failed", { stage: "firm", code: firmError?.code ?? "not_visible" });
+      return {
+        supabase,
+        user,
+        profile: null,
+        firm: firm as Firm | null,
+        client: client as ClientUser,
+        issue: firmError || !firm ? "firm_unavailable" : null,
+      };
+    }
+
+    return { ...empty, user };
+  } catch {
+    console.error("Session lookup failed", { stage: "network" });
+    return { ...empty, issue: "session_unavailable" };
   }
-
-  const { data: client } = await supabase.from("client_users").select("*").eq("id", user.id).maybeSingle();
-  if (client) {
-    const { data: firm } = await supabase.from("firms").select("*").eq("id", client.firm_id).maybeSingle();
-    return {
-      supabase,
-      user,
-      profile: null,
-      firm: firm as Firm | null,
-      client: client as ClientUser,
-    };
-  }
-
-  return { supabase, user, profile: null, firm: null, client: null };
 }
 
 export async function requireStaff() {
   const session = await getSession();
-  if (!session.user) redirect("/login");
-  if (session.client) redirect("/portal");
-  if (!session.profile || !session.firm) redirect("/onboarding");
+  const destination = sessionDestination(session);
+  if (destination !== "/dashboard") redirect(destination);
+  if (!session.user || !session.profile || !session.firm) throw new Error("Incomplete staff session");
   return {
     supabase: session.supabase,
     user: session.user,
@@ -100,7 +125,8 @@ export async function requireOwner() {
 
 export async function requireClient() {
   const session = await getSession();
-  if (!session.user) redirect("/login?next=/portal");
-  if (!session.client || !session.firm) redirect("/dashboard");
+  const destination = sessionDestination(session);
+  if (destination !== "/portal") redirect(destination);
+  if (!session.user || !session.client || !session.firm) throw new Error("Incomplete portal session");
   return { supabase: session.supabase, user: session.user, client: session.client, firm: session.firm };
 }

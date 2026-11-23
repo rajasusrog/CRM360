@@ -8,30 +8,24 @@ import { brand } from "@/lib/brand";
 import { Button } from "@/components/ui/button";
 
 const supabaseConfigured = supabasePublicConfig().configured;
+const demoEnabled = process.env.NEXT_PUBLIC_ENABLE_DEMO === "true";
 
 export function AuthPanel({ mode }: { mode: "login" | "signup" }) {
   const unconfigured = !supabaseConfigured;
   const [message, setMessage] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [fullName, setFullName] = useState("");
-  const [email, setEmail] = useState(mode === "login" ? "rajesh.iyer@kaveri.test" : "");
-  const [password, setPassword] = useState(mode === "login" ? "Kaveri#2026" : "");
+  const [email, setEmail] = useState(mode === "login" && demoEnabled ? "rajesh.iyer@kaveri.test" : "");
+  const [password, setPassword] = useState(mode === "login" && demoEnabled ? "Kaveri#2026" : "");
 
   useEffect(() => {
     const error = new URLSearchParams(window.location.search).get("error");
-    if (error) setMessage(error);
-    if (unconfigured) return;
     let cancelled = false;
-    createBrowserSupabase()
-      .auth.getSession()
-      .then(({ data }) => {
-        if (!cancelled && data.session) window.location.assign("/dashboard");
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [unconfigured]);
+    if (error) queueMicrotask(() => { if (!cancelled) setMessage(error); });
+    // A cached browser session does not prove that SSR can read its cookie.
+    // Never automatically bounce from login to the dashboard.
+    return () => { cancelled = true; };
+  }, []);
 
   async function magic() {
     setPending(true);
@@ -48,24 +42,25 @@ export function AuthPanel({ mode }: { mode: "login" | "signup" }) {
   async function passwordSignIn() {
     setPending(true);
     setMessage(null);
-    const supabase = createBrowserSupabase();
-    const result =
-      mode === "signup"
+    try {
+      const supabase = createBrowserSupabase();
+      const result = mode === "signup"
         ? await supabase.auth.signUp({
-            email,
-            password,
-            options: {
-              data: { full_name: fullName },
-              emailRedirectTo: `${window.location.origin}/auth/callback`,
-            },
+            email, password,
+            options: { data: { full_name: fullName }, emailRedirectTo: `${window.location.origin}/auth/callback` },
           })
         : await supabase.auth.signInWithPassword({ email, password });
-    setPending(false);
-    if (result.error) {
-      setMessage(result.error.message);
-      return;
+      if (result.error) { setMessage(result.error.message); return; }
+      if (!result.data.session) {
+        setMessage(mode === "signup" ? "Check your email to confirm your account before signing in." : "No session was created. Please sign in again.");
+        return;
+      }
+      window.location.assign("/auth/continue");
+    } catch {
+      setMessage("Could not reach sign-in. Please check your connection and try again.");
+    } finally {
+      setPending(false);
     }
-    window.location.assign("/dashboard");
   }
 
   async function google() {
@@ -101,9 +96,9 @@ export function AuthPanel({ mode }: { mode: "login" | "signup" }) {
         </Link>
         <h1 className="mt-6 font-display text-4xl leading-tight text-primary">{mode === "login" ? "Sign in to the desk." : "Open a firm workspace."}</h1>
         <p className="mt-3 text-sm text-muted-foreground">
-          Magic link is the usual way in. The seeded Chennai firm also has a password so you can look around without an inbox.
+          Sign in with your account, or request a magic link. Demo access is available only when this environment has been configured with demo users.
         </p>
-        {mode === "login" ? (
+        {mode === "login" && demoEnabled ? (
           <dl className="mt-6 space-y-2 rounded-xl bg-card p-4 text-sm ring-1 ring-foreground/10">
             <div className="flex justify-between gap-4"><dt>Owner</dt><dd>rajesh.iyer@kaveri.test</dd></div>
             <div className="flex justify-between gap-4"><dt>Password</dt><dd>Kaveri#2026</dd></div>

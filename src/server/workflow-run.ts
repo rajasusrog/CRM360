@@ -1,4 +1,4 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { createClient } from "@/lib/supabase/server";
 import { renderTemplate } from "@/lib/templates";
 import { parseActions } from "@/lib/workflows";
 
@@ -13,7 +13,7 @@ type RunContext = {
 };
 
 export async function runWorkflows(
-  supabase: SupabaseClient,
+  supabase: Pick<Awaited<ReturnType<typeof createClient>>, "from">,
   event: "lead.created" | "deal.stage_changed",
   context: RunContext,
 ) {
