@@ -83,21 +83,37 @@ export default function HomePage() {
 
         <section className="py-12">
           <h2 className="font-display text-3xl text-primary">Plans, in rupees</h2>
-          <p className="mt-1 text-sm text-muted-foreground">Trial includes Growth for 14 days. Razorpay stays in test mode until you add live keys.</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Flat monthly firm pricing — all seats included, not billed per user. Trial includes Growth for 14 days.
+          </p>
           <div className="mt-6 grid gap-4 md:grid-cols-3">
-            {Object.values(PLANS).map((plan) => (
-              <article key={plan.id} className="rounded-xl bg-card p-5 ring-1 ring-foreground/10">
-                <h3 className="font-display text-2xl text-primary">{plan.name}</h3>
-                <p className="mt-2 font-display text-4xl">{formatInr(plan.priceInr, 0)}<span className="text-base text-muted-foreground"> / month</span></p>
-                <p className="mt-2 text-sm text-muted-foreground">{plan.description}</p>
-                <ul className="mt-4 space-y-1 text-sm">
-                  <li>{plan.seats} seats</li>
-                  <li>{plan.clients.toLocaleString("en-IN")} clients</li>
-                  <li>{plan.workflows ? "Workflows" : "No workflows"}</li>
-                  <li>{plan.portal ? "Client portal" : "No client portal"}</li>
-                </ul>
-              </article>
-            ))}
+            {Object.values(PLANS).map((plan) => {
+              const perSeat = plan.priceInr === 0 ? 0 : Math.round(plan.priceInr / plan.seats);
+              return (
+                <article key={plan.id} className="rounded-xl bg-card p-5 ring-1 ring-foreground/10">
+                  <h3 className="font-display text-2xl text-primary">{plan.name}</h3>
+                  <p className="mt-2 font-display text-4xl">
+                    {plan.priceInr === 0 ? "Free" : formatInr(plan.priceInr, 0)}
+                    <span className="text-base text-muted-foreground">
+                      {plan.priceInr === 0 ? " forever" : " / month flat"}
+                    </span>
+                  </p>
+                  <p className="mt-1 text-xs font-medium text-muted-foreground">
+                    {plan.priceInr === 0
+                      ? `Up to ${plan.seats} seats · ₹0/seat`
+                      : `Up to ${plan.seats} seats included (~${formatInr(perSeat, 0)}/seat)`}
+                  </p>
+                  <p className="mt-2 text-sm text-muted-foreground">{plan.description}</p>
+                  <ul className="mt-4 space-y-1 text-sm">
+                    <li>{plan.seats} seats included</li>
+                    <li>{plan.clients.toLocaleString("en-IN")} clients</li>
+                    <li>Compliance calendar &amp; GST invoices</li>
+                    <li>{plan.workflows ? "Workflows & custom fields" : "Core pipeline & tasks"}</li>
+                    <li>{plan.portal ? "Client portal & upload links" : "No client portal"}</li>
+                  </ul>
+                </article>
+              );
+            })}
           </div>
         </section>
       </main>

@@ -82,26 +82,44 @@ export default async function SettingsPage() {
         </Panel>
         <Panel>
           <h2 className="font-display text-2xl">Subscription</h2>
-          <p className="mt-1 text-sm text-muted-foreground">Status {session.firm.subscription_status}. Razorpay runs in test mode when keys are present.</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Status {session.firm.subscription_status}. Flat monthly firm pricing (all seats included). Razorpay runs in test mode when keys are present.
+          </p>
           <ul className="mt-3 space-y-3 text-sm">
-            {Object.values(PLANS).map((item) => (
-              <li key={item.id} className="rounded-lg border border-border p-3">
-                <p className="font-medium">{item.name} · {formatInr(item.priceInr, 0)} / month</p>
-                <p className="text-muted-foreground">{item.seats} seats · {item.clients.toLocaleString("en-IN")} clients</p>
-                {session.profile.role === "owner" ? (
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <ActionForm action={startSubscription}>
-                      <input type="hidden" name="plan" value={item.id} />
-                      <Submit>Razorpay test checkout</Submit>
-                    </ActionForm>
-                    <ActionForm action={activateLocalPlan}>
-                      <input type="hidden" name="plan" value={item.id} />
-                      <Submit>Activate locally</Submit>
-                    </ActionForm>
-                  </div>
-                ) : null}
-              </li>
-            ))}
+            {Object.values(PLANS).map((item) => {
+              const perSeat = item.priceInr === 0 ? 0 : Math.round(item.priceInr / item.seats);
+              return (
+                <li key={item.id} className="rounded-lg border border-border p-3">
+                  <p className="font-medium">
+                    {item.name} · {item.priceInr === 0 ? "Free forever" : `${formatInr(item.priceInr, 0)} / month flat`}
+                  </p>
+                  <p className="text-muted-foreground">
+                    {item.seats} seats ({item.priceInr === 0 ? "₹0/seat" : `~${formatInr(perSeat, 0)}/seat`}) · {item.clients.toLocaleString("en-IN")} clients
+                  </p>
+                  {session.profile.role === "owner" ? (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {item.priceInr === 0 ? (
+                        <ActionForm action={startSubscription}>
+                          <input type="hidden" name="plan" value={item.id} />
+                          <Submit>Switch to Free plan</Submit>
+                        </ActionForm>
+                      ) : (
+                        <>
+                          <ActionForm action={startSubscription}>
+                            <input type="hidden" name="plan" value={item.id} />
+                            <Submit>Razorpay test checkout</Submit>
+                          </ActionForm>
+                          <ActionForm action={activateLocalPlan}>
+                            <input type="hidden" name="plan" value={item.id} />
+                            <Submit>Activate locally</Submit>
+                          </ActionForm>
+                        </>
+                      )}
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         </Panel>
         <Panel>

@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { featuresFor, isPlanId, type PlanId } from "@/lib/plans";
+import { PLANS, featuresFor, isPlanId, type PlanId } from "@/lib/plans";
 import { validateGstin } from "@/lib/gst/gstin";
 import { normalizeIndianMobile } from "@/lib/format";
 import { requireOwner, requireStaff, requireWriter } from "@/lib/session";
@@ -238,6 +238,15 @@ export async function startSubscription(formData: FormData) {
   if (session.error) return { error: session.error };
   const plan = text(formData, "plan");
   if (!isPlanId(plan)) return { error: "Unknown plan." };
+  if (PLANS[plan].priceInr === 0) {
+    const { error } = await session.supabase
+      .from("firms")
+      .update({ plan, subscription_status: "active", trial_ends_at: null, razorpay_subscription_id: null })
+      .eq("id", session.firm.id);
+    if (error) return { error: error.message };
+    revalidatePath("/settings");
+    return { ok: `${PLANS[plan].name} (Free) is now active.` };
+  }
   const result = await razorpayPlan(plan);
   if (!result.configured) return { error: "Razorpay test keys are not set. Use local activation, or add the keys from the Razorpay test dashboard." };
   if ("error" in result && result.error) return { error: result.error };
