@@ -1,15 +1,28 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
-import { supabasePublicConfig } from "@/lib/supabase/public-env";
+import { AUTH_NEXT_COOKIE, hasPkceVerifierCookie } from "@/lib/supabase/options";
+import { isLocalOrPreviewHost, supabasePublicConfig } from "@/lib/supabase/public-env";
 import { brand } from "@/lib/brand";
 import { Button } from "@/components/ui/button";
 import { resolvePostAuthDestination } from "@/server/actions/auth";
 
 const supabaseConfig = supabasePublicConfig();
 const supabaseConfigured = supabaseConfig.configured;
+
+function readDocumentCookies(): Array<{ name: string; value: string }> {
+  if (typeof document === "undefined" || !document.cookie) return [];
+  return document.cookie.split(";").map((entry) => {
+    const idx = entry.indexOf("=");
+    if (idx === -1) return { name: entry.trim(), value: "" };
+    return {
+      name: entry.slice(0, idx).trim(),
+      value: entry.slice(idx + 1).trim(),
+    };
+  });
+}
 
 export function AuthPanel({
   mode,
@@ -28,97 +41,165 @@ export function AuthPanel({
   const showDemo = demoEnabled && mode === "login";
   const [message, setMessage] = useState<string | null>(initialError);
   const [pending, setPending] = useState(false);
+  const inFlightRef = useRef(false);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState(showDemo ? "rajesh.iyer@kaveri.test" : "");
   const [password, setPassword] = useState(showDemo ? "Kaveri#2026" : "");
 
+  function releaseLock(nextMessage?: string) {
+    inFlightRef.current = false;
+    setPending(false);
+    if (nextMessage !== undefined) setMessage(nextMessage);
+  }
+
+  function ensureSameOriginForPkce(): boolean {
+    if (typeof window === "undefined") return false;
+    if (
+      appOrigin &&
+      window.location.origin !== appOrigin &&
+      !isLocalOrPreviewHost(window.location.hostname)
+    ) {
+      const target = new URL(window.location.pathname + window.location.search, appOrigin);
+      window.location.replace(target.toString());
+      return false;
+    }
+    return true;
+  }
+
   function callbackUrl() {
-    const origin = appOrigin || window.location.origin;
-    const url = new URL("/auth/callback", origin);
-    if (nextPath) url.searchParams.set("next", nextPath);
-    return url.toString();
+    // Sign-in must start and finish on the same origin so the host-only PKCE verifier cookie reaches /auth/callback.
+    const origin =
+      typeof window !== "undefined" ? window.location.origin : appOrigin || "https://crmpro360.unikorn360.com";
+    return new URL("/auth/callback", origin).toString();
+  }
+
+  function persistNextCookie() {
+    if (typeof document === "undefined") return;
+    const secureAttr = window.location.protocol === "https:" ? "; Secure" : "";
+    if (nextPath) {
+      document.cookie = `${AUTH_NEXT_COOKIE}=${encodeURIComponent(nextPath)}; Path=/; Max-Age=600; SameSite=Lax${secureAttr}`;
+    } else {
+      document.cookie = `${AUTH_NEXT_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax${secureAttr}`;
+    }
   }
 
   async function magic() {
+    if (inFlightRef.current || pending) return;
+    inFlightRef.current = true;
     setPending(true);
     setMessage(null);
-    const supabase = createBrowserSupabase();
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: callbackUrl() },
-    });
-    setPending(false);
-    setMessage(error ? error.message : "Check your email for the sign-in link.");
+
+    if (!ensureSameOriginForPkce()) return;
+
+    try {
+      persistNextCookie();
+      const supabase = createBrowserSupabase();
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: { emailRedirectTo: callbackUrl() },
+      });
+      if (error) {
+        releaseLock(error.message);
+        return;
+      }
+      const verifierPresent = hasPkceVerifierCookie(readDocumentCookies());
+      releaseLock(
+        verifierPresent
+          ? "Check your email for the sign-in link. Open it in this same browser."
+          : "Sign-in email sent, but browser cookies appear blocked—enable cookies here before opening the link.",
+      );
+    } catch {
+      releaseLock("Could not send the sign-in link. Try again shortly.");
+    }
   }
 
   async function passwordSignIn() {
+    if (inFlightRef.current || pending) return;
+    inFlightRef.current = true;
     setPending(true);
     setMessage(null);
-    const supabase = createBrowserSupabase();
-
-    if (mode === "signup") {
-      const result = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: { full_name: fullName },
-          emailRedirectTo: callbackUrl(),
-        },
-      });
-      if (result.error) {
-        setPending(false);
-        setMessage(result.error.message);
-        return;
-      }
-      if (!result.data.session) {
-        setPending(false);
-        setMessage("Account created. Check your email to confirm your address before signing in.");
-        return;
-      }
-    } else {
-      const result = await supabase.auth.signInWithPassword({ email, password });
-      if (result.error) {
-        setPending(false);
-        setMessage(result.error.message);
-        return;
-      }
-    }
 
     try {
+      const supabase = createBrowserSupabase();
+
+      if (mode === "signup") {
+        persistNextCookie();
+        const result = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: { full_name: fullName },
+            emailRedirectTo: callbackUrl(),
+          },
+        });
+        if (result.error) {
+          releaseLock(result.error.message);
+          return;
+        }
+        if (!result.data.session) {
+          releaseLock("Account created. Check your email to confirm your address before signing in.");
+          return;
+        }
+      } else {
+        const result = await supabase.auth.signInWithPassword({ email, password });
+        if (result.error) {
+          releaseLock(result.error.message);
+          return;
+        }
+      }
+
       const { destination } = await resolvePostAuthDestination(nextPath || null);
       window.location.assign(destination);
     } catch {
-      setPending(false);
-      setMessage("Signed in, but could not verify your destination. Reload to continue.");
+      releaseLock("Signed in, but could not verify your destination. Reload to continue.");
     }
   }
 
   async function google() {
+    if (inFlightRef.current || pending) return;
+    inFlightRef.current = true;
     setPending(true);
     setMessage(null);
+
+    if (!ensureSameOriginForPkce()) return;
+
     const base = supabaseConfig.url;
     const key = supabaseConfig.key;
     try {
       const settings = await fetch(`${base}/auth/v1/settings`, { headers: { apikey: key } }).then((response) => response.json());
       if (!settings?.external?.google) {
-        setMessage("Google sign-in is not turned on for this project yet. Use email sign-in.");
-        setPending(false);
+        releaseLock("Google sign-in is not turned on for this project yet. Use email sign-in.");
         return;
       }
     } catch {
-      setMessage("Could not reach sign-in. Try again shortly.");
-      setPending(false);
+      releaseLock("Could not reach sign-in. Try again shortly.");
       return;
     }
 
-    const supabase = createBrowserSupabase();
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo: callbackUrl() },
-    });
-    if (error) {
-      setPending(false);
-      setMessage(error.message);
+    try {
+      persistNextCookie();
+      const supabase = createBrowserSupabase();
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: callbackUrl(),
+          skipBrowserRedirect: true,
+        },
+      });
+      if (error || !data?.url) {
+        releaseLock(error?.message ?? "Could not start Google sign-in.");
+        return;
+      }
+
+      const verifierPresent = hasPkceVerifierCookie(readDocumentCookies());
+      if (!verifierPresent) {
+        releaseLock("Browser cookies must be enabled for this site to complete Google sign-in.");
+        return;
+      }
+
+      window.location.assign(data.url);
+    } catch {
+      releaseLock("Could not start Google sign-in. Try again shortly.");
     }
   }
 

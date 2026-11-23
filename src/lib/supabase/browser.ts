@@ -7,6 +7,11 @@ export function createBrowserSupabase() {
   return createBrowserClient<CrmDatabase, typeof CRM_SCHEMA>(url, key, {
     db: { schema: CRM_SCHEMA },
     cookieOptions: supabaseCookieOptions,
-    isSingleton: false,
+    isSingleton: true,
+    auth: {
+      flowType: "pkce",
+      detectSessionInUrl: false,
+      persistSession: true,
+    },
   });
 }

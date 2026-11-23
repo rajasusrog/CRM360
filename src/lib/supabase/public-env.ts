@@ -27,6 +27,17 @@ export function getConfiguredAppOrigin(): string | null {
   return null;
 }
 
+export function isLocalOrPreviewHost(hostname: string): boolean {
+  const host = hostname.trim().toLowerCase();
+  return (
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host === "[::1]" ||
+    host.endsWith(".run.app") ||
+    host.endsWith(".trycloudflare.com")
+  );
+}
+
 export function isDemoModeEnabled(): boolean {
   return process.env.NEXT_PUBLIC_DEMO_MODE === "true";
 }

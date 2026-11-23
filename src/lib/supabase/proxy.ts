@@ -4,6 +4,11 @@ import { CRM_SCHEMA, supabaseCookieOptions, type CrmDatabase } from "@/lib/supab
 import { supabasePublicConfig } from "@/lib/supabase/public-env";
 
 export async function updateSession(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+  if (pathname === "/auth/callback" || pathname === "/auth/continue") {
+    return NextResponse.next({ request });
+  }
+
   let response = NextResponse.next({ request });
   const pub = supabasePublicConfig();
   const url = process.env.SUPABASE_INTERNAL_URL || pub.url;

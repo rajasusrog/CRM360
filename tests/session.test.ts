@@ -545,4 +545,18 @@ describe("verified session routing invariants (consolidated from auth-routing)",
     expect(clientMismatch.issue?.code).toBe("missing_firm");
     expect(resolveAuthDestination(clientMismatch)).toBe("/auth/recovery");
   });
+
+  it("never routes sessions carrying a database/lookup issue to onboarding", () => {
+    expect(
+      resolveAuthDestination({
+        ...baseSession,
+        state: "no_membership",
+        user: DEMO_USER,
+        issue: {
+          code: "membership_lookup_failed",
+          message: "Could not verify your CRM membership.",
+        },
+      }),
+    ).toBe("/auth/recovery");
+  });
 });
