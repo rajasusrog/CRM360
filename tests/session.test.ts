@@ -1,3 +1,4 @@
+import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CrmSupabaseClient, Firm, Profile, ClientUser } from "@/lib/auth-routing";
 
@@ -37,6 +38,7 @@ import {
   resolveAuthDestination,
   safeNextPath,
 } from "@/lib/session";
+import { GET as continueGet } from "@/app/auth/continue/route";
 
 const DEMO_USER = {
   id: "user-1",
@@ -339,5 +341,122 @@ describe("getSession and auth routing", () => {
     );
     await expect(requireStaff()).rejects.toMatchObject({ location: "/auth/recovery" });
     await expect(requireClient()).rejects.toMatchObject({ location: "/auth/recovery" });
+  });
+});
+
+describe("GET /auth/continue", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    delete process.env.NEXT_PUBLIC_APP_URL;
+    mockSupabasePublicConfig.mockReturnValue({
+      url: "https://example.supabase.co",
+      key: "anon-key",
+      configured: true,
+    });
+  });
+
+  it("redirects unauthenticated callers to /login with Cache-Control: no-store", async () => {
+    mockCreateClient.mockResolvedValue(
+      makeMockSupabase({
+        getUser: async () => ({
+          data: { user: null },
+          error: { name: "AuthSessionMissingError", status: 400, message: "Auth session missing!" },
+        }),
+      }),
+    );
+
+    const response = await continueGet(new NextRequest("https://crmpro360.unikorn360.com/auth/continue"));
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("https://crmpro360.unikorn360.com/login");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("redirects verified staff to /dashboard (or safe staff next) and rejects external/self-loop targets", async () => {
+    mockCreateClient.mockResolvedValue(
+      makeMockSupabase({
+        tables: {
+          profiles: { data: DEMO_PROFILE, error: null },
+          client_users: { data: null, error: null },
+          firms: { data: DEMO_FIRM, error: null },
+        },
+      }),
+    );
+
+    const defaultRes = await continueGet(new NextRequest("https://crmpro360.unikorn360.com/auth/continue"));
+    expect(defaultRes.headers.get("location")).toBe("https://crmpro360.unikorn360.com/dashboard");
+    expect(defaultRes.headers.get("cache-control")).toBe("no-store");
+
+    const nextRes = await continueGet(new NextRequest("https://crmpro360.unikorn360.com/auth/continue?next=/deals"));
+    expect(nextRes.headers.get("location")).toBe("https://crmpro360.unikorn360.com/deals");
+    expect(nextRes.headers.get("cache-control")).toBe("no-store");
+
+    const evilRes = await continueGet(
+      new NextRequest("https://crmpro360.unikorn360.com/auth/continue?next=https://evil.com/phish"),
+    );
+    expect(evilRes.headers.get("location")).toBe("https://crmpro360.unikorn360.com/dashboard");
+    expect(evilRes.headers.get("cache-control")).toBe("no-store");
+
+    const loopRes = await continueGet(
+      new NextRequest("https://crmpro360.unikorn360.com/auth/continue?next=/auth/continue"),
+    );
+    expect(loopRes.headers.get("location")).toBe("https://crmpro360.unikorn360.com/dashboard");
+  });
+
+  it("redirects verified client users to /portal and no_membership users to /onboarding with no-store", async () => {
+    mockCreateClient.mockResolvedValue(
+      makeMockSupabase({
+        tables: {
+          profiles: { data: null, error: null },
+          client_users: { data: DEMO_CLIENT, error: null },
+          firms: { data: DEMO_FIRM, error: null },
+        },
+      }),
+    );
+
+    const clientRes = await continueGet(new NextRequest("https://crmpro360.unikorn360.com/auth/continue?next=/dashboard"));
+    expect(clientRes.headers.get("location")).toBe("https://crmpro360.unikorn360.com/portal");
+    expect(clientRes.headers.get("cache-control")).toBe("no-store");
+
+    mockCreateClient.mockResolvedValue(
+      makeMockSupabase({
+        tables: {
+          profiles: { data: null, error: null },
+          client_users: { data: null, error: null },
+        },
+      }),
+    );
+
+    const onboardRes = await continueGet(new NextRequest("https://crmpro360.unikorn360.com/auth/continue"));
+    expect(onboardRes.headers.get("location")).toBe("https://crmpro360.unikorn360.com/onboarding");
+    expect(onboardRes.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("redirects lookup_failed and missing_firm to /auth/recovery with Cache-Control: no-store", async () => {
+    mockCreateClient.mockResolvedValue(
+      makeMockSupabase({
+        tables: {
+          profiles: { data: null, error: { message: "schema crmpro lookup failed" } },
+          client_users: { data: null, error: null },
+        },
+      }),
+    );
+
+    const failedRes = await continueGet(new NextRequest("https://crmpro360.unikorn360.com/auth/continue"));
+    expect(failedRes.headers.get("location")).toBe("https://crmpro360.unikorn360.com/auth/recovery");
+    expect(failedRes.headers.get("cache-control")).toBe("no-store");
+
+    mockCreateClient.mockResolvedValue(
+      makeMockSupabase({
+        tables: {
+          profiles: { data: DEMO_PROFILE, error: null },
+          client_users: { data: null, error: null },
+          firms: { data: null, error: null },
+        },
+      }),
+    );
+
+    const missingFirmRes = await continueGet(new NextRequest("https://crmpro360.unikorn360.com/auth/continue"));
+    expect(missingFirmRes.headers.get("location")).toBe("https://crmpro360.unikorn360.com/auth/recovery");
+    expect(missingFirmRes.headers.get("cache-control")).toBe("no-store");
   });
 });

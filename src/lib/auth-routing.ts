@@ -68,7 +68,7 @@ export type SessionResult = {
   issue: SessionIssue | null;
 };
 
-const AUTH_LOOP_PREFIXES = ["/login", "/signup", "/auth/callback", "/auth/recovery"];
+const AUTH_LOOP_PREFIXES = ["/login", "/signup", "/auth/callback", "/auth/continue", "/auth/recovery"];
 
 function isAuthLoopPath(path: string): boolean {
   const pathname = path.split("?")[0]?.split("#")[0] ?? path;
