@@ -136,7 +136,7 @@ jobs:
         run: npx vitest run tests/ai-concurrency-db.test.ts tests/rls.test.ts
 
       - name: Run TypeScript typecheck
-        run: npx tsc --noEmit
+        run: npx next typegen && npx tsc --noEmit
 
       - name: Run unit, AI, session, and PKCE tests
         run: npx vitest run tests/ai-copilot.test.ts tests/session.test.ts tests/pkce.test.ts

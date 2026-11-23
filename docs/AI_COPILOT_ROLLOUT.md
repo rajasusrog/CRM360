@@ -10,7 +10,7 @@ Storage bucket: `crmpro_documents` (private)
 
 ## 0. Workspace vs. GitHub `main` Reconciliation Note
 
-Before merging or deploying, sync the updated workspace files cleanly onto `rajasusrog/CRM360` `main` without overwriting files that live on `main` (`CRMPRO-SETUP.md`, `LOGIN-FIX.md`, `package-lock.json`, `scripts/test-crmpro-db.mjs`, `supabase/config.toml`, `supabase/crmpro-bootstrap.sql`, `supabase/migrations/20261122165839_crmpro_api.sql`, `supabase/seed.sql`).
+Before merging or deploying, sync the updated workspace files (including the refreshed `package-lock.json`) cleanly onto `rajasusrog/CRM360` `main` without overwriting files that live only on `main` (`CRMPRO-SETUP.md`, `LOGIN-FIX.md`, `scripts/test-crmpro-db.mjs`, `supabase/config.toml`, `supabase/crmpro-bootstrap.sql`, `supabase/migrations/20261122165839_crmpro_api.sql`, `supabase/seed.sql`).
 
 Because the shared Supabase project had base tables created earlier via SQL Editor (`CRMPRO-SETUP.md`), **never** run `supabase db reset`, import demo seeds, or run an unreviewed `supabase db push` against production.
 
