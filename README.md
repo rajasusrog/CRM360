@@ -1,10 +1,3 @@
-> CRM namespace update: this branch uses `crmpro` for all CRM tables,
-> `crmpro_private` for internal helpers, `crmpro_` RPC entry points and the
-> private `crmpro_documents` bucket. See `CRMPRO-SETUP.md` before deploying.
-> The instructions below describe the original prototype; the namespace setup
-> takes precedence for database installation. Do not run a reset or seed on
-> a shared/production project.
-
 # Unikorn360
 
 Practice CRM for small Chartered Accountant and GST firms in Tamil Nadu. One firm is one tenant. Leads, clients, a compliance calendar, and GST invoices live in the same desk.

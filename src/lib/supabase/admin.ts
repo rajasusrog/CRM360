@@ -7,7 +7,6 @@ export function createAdmin() {
     throw new Error("Supabase service role is not configured.");
   }
   return createClient(url, key, {
-    db: { schema: "crmpro" },
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }

@@ -111,7 +111,7 @@ values (
   'email', now(), now(), now()
 );
 
-insert into crmpro.firms (
+insert into public.firms (
   id, name, city, state_code, address, pincode, phone, email, gstin, pan, sac_code,
   plan, subscription_status, trial_ends_at
 ) values (
@@ -121,14 +121,14 @@ insert into crmpro.firms (
   'growth', 'trialing', now() + interval '10 days'
 );
 
-insert into crmpro.profiles (id, firm_id, full_name, email, phone, role) values
+insert into public.profiles (id, firm_id, full_name, email, phone, role) values
   ('11111111-1111-4111-8111-111111111111', 'a0000000-0000-4000-8000-000000000001', 'Rajesh Iyer', 'rajesh.iyer@kaveri.test', '9840011122', 'owner'),
   ('22222222-2222-4222-8222-222222222222', 'a0000000-0000-4000-8000-000000000001', 'Priya Subramanian', 'priya.subramanian@kaveri.test', '9840022233', 'partner'),
   ('33333333-3333-4333-8333-333333333333', 'a0000000-0000-4000-8000-000000000001', 'Karthik Natarajan', 'karthik.n@kaveri.test', '9840033344', 'staff'),
   ('44444444-4444-4444-8444-444444444444', 'a0000000-0000-4000-8000-000000000001', 'Divya Mohan', 'divya.mohan@kaveri.test', '9840044455', 'staff'),
   ('55555555-5555-4555-8555-555555555555', 'a0000000-0000-4000-8000-000000000001', 'Anitha Raman', 'anitha.raman@kaveri.test', '9840055566', 'readonly');
 
-insert into crmpro.pipeline_stages (id, firm_id, name, position, probability, is_won, is_lost, color) values
+insert into public.pipeline_stages (id, firm_id, name, position, probability, is_won, is_lost, color) values
   ('c0000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000001', 'New', 1, 10, false, false, '#c4b49a'),
   ('c0000000-0000-4000-8000-000000000002', 'a0000000-0000-4000-8000-000000000001', 'Qualified', 2, 30, false, false, '#7d9a8a'),
   ('c0000000-0000-4000-8000-000000000003', 'a0000000-0000-4000-8000-000000000001', 'Proposal', 3, 50, false, false, '#c4924a'),
@@ -136,7 +136,7 @@ insert into crmpro.pipeline_stages (id, firm_id, name, position, probability, is
   ('c0000000-0000-4000-8000-000000000005', 'a0000000-0000-4000-8000-000000000001', 'Won', 5, 100, true, false, '#1c6b5a'),
   ('c0000000-0000-4000-8000-000000000006', 'a0000000-0000-4000-8000-000000000001', 'Lost', 6, 0, false, true, '#9b3a2f');
 
-insert into crmpro.accounts (
+insert into public.accounts (
   id, firm_id, name, entity_type, pan, gstin, gst_filing_frequency, state_code, place_of_supply,
   requires_audit, email, phone, address, city, pincode, assigned_staff_id, portal_enabled, status,
   consent_data_processing, consent_marketing, consent_purpose, consent_at, notes
@@ -160,7 +160,7 @@ insert into crmpro.accounts (
     'hello@pondycrafts.example', '9846066554', '18, Mission Street', 'Puducherry', '605001', '44444444-4444-4444-8444-444444444444', false, 'active',
     true, true, 'Quarterly GST and shop accounts', now(), 'Handloom retailer. QRMP, due date follows the 22nd group.');
 
-insert into crmpro.contacts (
+insert into public.contacts (
   id, firm_id, account_id, first_name, last_name, email, phone, designation, is_primary,
   consent_data_processing, consent_purpose, consent_at
 ) values
@@ -171,13 +171,13 @@ insert into crmpro.contacts (
   ('b1000000-0000-4000-8000-000000000005', 'a0000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000005', 'Arun', 'Prakash', 'arun.prakash@example.com', '9845077665', 'Self', true, true, 'Income-tax return', now()),
   ('b1000000-0000-4000-8000-000000000006', 'a0000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000006', 'Devika', 'Ramesh', 'hello@pondycrafts.example', '9846066554', 'Proprietor', true, true, 'Shop GST', now());
 
-insert into crmpro.client_users (id, firm_id, account_id, contact_id)
+insert into public.client_users (id, firm_id, account_id, contact_id)
 values ('66666666-6666-4666-8666-666666666666', 'a0000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000001', 'b1000000-0000-4000-8000-000000000001');
 
-insert into crmpro.web_forms (id, firm_id, name, public_key, default_owner_id, default_source)
+insert into public.web_forms (id, firm_id, name, public_key, default_owner_id, default_source)
 values ('e0000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000001', 'Website enquiry', 'kaveriwebform01', '33333333-3333-4333-8333-333333333333', 'web-form');
 
-insert into crmpro.leads (
+insert into public.leads (
   id, firm_id, first_name, last_name, company, email, phone, source, status, owner_id, city, notes,
   consent_data_processing, consent_purpose, consent_at, web_form_id, custom_fields
 ) values
@@ -188,7 +188,7 @@ insert into crmpro.leads (
   ('d3000000-0000-4000-8000-000000000005', 'a0000000-0000-4000-8000-000000000001', 'Nandini', 'Rao', 'Nilgiri Tea House', 'nandini@nilgiritea.example', '9841556677', 'phone', 'unqualified', '55555555-5555-4555-8555-555555555555', 'Ooty', 'Looking for a full-time accountant on payroll, not a firm retainer.', false, null, null, null, '{}'),
   ('d3000000-0000-4000-8000-000000000006', 'a0000000-0000-4000-8000-000000000001', 'Joseph', 'D', 'Palani Tours', 'joseph@palanitours.example', '9841667788', 'referral', 'contacted', '33333333-3333-4333-8333-333333333333', 'Palani', 'Fleet of two tempo travellers. Books are in a notebook.', true, 'Enquiry follow-up', now(), null, '{}');
 
-insert into crmpro.deals (id, firm_id, name, account_id, contact_id, stage_id, amount, expected_close, owner_id, source, notes) values
+insert into public.deals (id, firm_id, name, account_id, contact_id, stage_id, amount, expected_close, owner_id, source, notes) values
   ('d2000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000001', 'Statutory audit FY 2026-27', 'b0000000-0000-4000-8000-000000000001', 'b1000000-0000-4000-8000-000000000001', 'c0000000-0000-4000-8000-000000000003', 180000, '2026-12-15', '33333333-3333-4333-8333-333333333333', 'existing', 'Proposal sent 12 Nov. Waiting on the board.'),
   ('d2000000-0000-4000-8000-000000000002', 'a0000000-0000-4000-8000-000000000001', 'GST retainer renewal', 'b0000000-0000-4000-8000-000000000002', 'b1000000-0000-4000-8000-000000000002', 'c0000000-0000-4000-8000-000000000004', 48000, '2026-11-30', '44444444-4444-4444-8444-444444444444', 'existing', 'She asked to drop the quarterly fee by two thousand.'),
   ('d2000000-0000-4000-8000-000000000003', 'a0000000-0000-4000-8000-000000000001', 'LLP filings plus GST', 'b0000000-0000-4000-8000-000000000003', 'b1000000-0000-4000-8000-000000000003', 'c0000000-0000-4000-8000-000000000002', 96000, '2027-01-20', '22222222-2222-4222-8222-222222222222', 'existing', 'Qualified. Partners want a single engagement letter.'),
@@ -196,7 +196,7 @@ insert into crmpro.deals (id, firm_id, name, account_id, contact_id, stage_id, a
   ('d2000000-0000-4000-8000-000000000005', 'a0000000-0000-4000-8000-000000000001', 'ITR FY 2026-27', 'b0000000-0000-4000-8000-000000000005', 'b1000000-0000-4000-8000-000000000005', 'c0000000-0000-4000-8000-000000000001', 8000, '2027-06-30', '44444444-4444-4444-8444-444444444444', 'existing', 'Form 16 expected in June.'),
   ('d2000000-0000-4000-8000-000000000006', 'a0000000-0000-4000-8000-000000000001', 'GST registration', 'b0000000-0000-4000-8000-000000000006', 'b1000000-0000-4000-8000-000000000006', 'c0000000-0000-4000-8000-000000000006', 15000, '2026-06-01', '44444444-4444-4444-8444-444444444444', 'walk-in', 'She registered herself. Lost on price.');
 
-insert into crmpro.activities (firm_id, type, subject, body, due_at, completed_at, related_type, related_id, owner_id) values
+insert into public.activities (firm_id, type, subject, body, due_at, completed_at, related_type, related_id, owner_id) values
   ('a0000000-0000-4000-8000-000000000001', 'task', 'Call Meena about the boutique GSTIN', 'She will bring the rental agreement and PAN.', '2026-11-18 10:00:00+05:30', null, 'lead', 'd3000000-0000-4000-8000-000000000001', '33333333-3333-4333-8333-333333333333'),
   ('a0000000-0000-4000-8000-000000000001', 'meeting', 'GST review with Selvam Murugan', 'October GSTR-3B and the e-invoice mismatch.', '2026-11-25 16:00:00+05:30', null, 'account', 'b0000000-0000-4000-8000-000000000001', '33333333-3333-4333-8333-333333333333'),
   ('a0000000-0000-4000-8000-000000000001', 'task', 'Chase Lakshmi Sweets bank statement', 'Need September and October for the QRMP working.', '2026-11-20 11:00:00+05:30', null, 'account', 'b0000000-0000-4000-8000-000000000002', '44444444-4444-4444-8444-444444444444'),
@@ -204,30 +204,30 @@ insert into crmpro.activities (firm_id, type, subject, body, due_at, completed_a
   ('a0000000-0000-4000-8000-000000000001', 'call', 'Introductory call with Coastal Spices', 'Hannah wants a quote for monthly GST plus LUT.', '2026-11-23 15:30:00+05:30', null, 'lead', 'd3000000-0000-4000-8000-000000000003', '33333333-3333-4333-8333-333333333333'),
   ('a0000000-0000-4000-8000-000000000001', 'task', 'Send engagement letter to Cauvery Agro', 'Priya to review the LLP scope before it goes out.', '2026-11-28 12:00:00+05:30', null, 'deal', 'd2000000-0000-4000-8000-000000000003', '22222222-2222-4222-8222-222222222222');
 
-insert into crmpro.tags (id, firm_id, name, color) values
+insert into public.tags (id, firm_id, name, color) values
   ('e1000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000001', 'GST', '#1c6b5a'),
   ('e1000000-0000-4000-8000-000000000002', 'a0000000-0000-4000-8000-000000000001', 'Audit', '#9a7040'),
   ('e1000000-0000-4000-8000-000000000003', 'a0000000-0000-4000-8000-000000000001', 'Retainer', '#3d7a86');
 
-insert into crmpro.record_tags (firm_id, tag_id, record_type, record_id) values
+insert into public.record_tags (firm_id, tag_id, record_type, record_id) values
   ('a0000000-0000-4000-8000-000000000001', 'e1000000-0000-4000-8000-000000000001', 'account', 'b0000000-0000-4000-8000-000000000001'),
   ('a0000000-0000-4000-8000-000000000001', 'e1000000-0000-4000-8000-000000000002', 'account', 'b0000000-0000-4000-8000-000000000001'),
   ('a0000000-0000-4000-8000-000000000001', 'e1000000-0000-4000-8000-000000000003', 'account', 'b0000000-0000-4000-8000-000000000002'),
   ('a0000000-0000-4000-8000-000000000001', 'e1000000-0000-4000-8000-000000000001', 'deal', 'd2000000-0000-4000-8000-000000000004');
 
-insert into crmpro.custom_field_defs (firm_id, module, key, label, field_type, options, position) values
+insert into public.custom_field_defs (firm_id, module, key, label, field_type, options, position) values
   ('a0000000-0000-4000-8000-000000000001', 'lead', 'preferred_language', 'Preferred language', 'select', '["Tamil","English"]'::jsonb, 1);
 
-insert into crmpro.saved_views (firm_id, user_id, module, name, filters, is_shared) values
+insert into public.saved_views (firm_id, user_id, module, name, filters, is_shared) values
   ('a0000000-0000-4000-8000-000000000001', '11111111-1111-4111-8111-111111111111', 'lead', 'New leads', '{"status":"new"}'::jsonb, true),
   ('a0000000-0000-4000-8000-000000000001', '44444444-4444-4444-8444-444444444444', 'account', 'My clients', '{"staff":"44444444-4444-4444-8444-444444444444"}'::jsonb, false);
 
-insert into crmpro.engagements (id, firm_id, account_id, service_name, sac_code, fee, billing_cycle, start_date, status) values
+insert into public.engagements (id, firm_id, account_id, service_name, sac_code, fee, billing_cycle, start_date, status) values
   ('e2000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000001', 'Statutory audit', '998221', 75000, 'annual', '2026-04-01', 'active'),
   ('e2000000-0000-4000-8000-000000000002', 'a0000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000004', 'Monthly GST and LUT', '998231', 20000, 'monthly', '2026-08-01', 'active'),
   ('e2000000-0000-4000-8000-000000000003', 'a0000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000002', 'Bookkeeping and QRMP', '998222', 12000, 'quarterly', '2026-04-01', 'active');
 
-insert into crmpro.invoices (
+insert into public.invoices (
   id, firm_id, account_id, engagement_id, invoice_number, invoice_date, due_date, place_of_supply,
   sac_code, description, taxable_value, cgst, sgst, igst, total, status
 ) values
@@ -241,25 +241,25 @@ insert into crmpro.invoices (
     'KA/26-27/011', '2026-10-08', '2026-10-23', '33', '998222', 'Bookkeeping and QRMP, Q2',
     12000.00, 1080.00, 1080.00, 0.00, 14160.00, 'partial');
 
-insert into crmpro.invoice_payments (firm_id, invoice_id, amount, paid_on, mode, reference) values
+insert into public.invoice_payments (firm_id, invoice_id, amount, paid_on, mode, reference) values
   ('a0000000-0000-4000-8000-000000000001', 'e3000000-0000-4000-8000-000000000001', 88500.00, '2026-10-09', 'neft', 'NEFT MURUGAN 09OCT'),
   ('a0000000-0000-4000-8000-000000000001', 'e3000000-0000-4000-8000-000000000003', 5000, '2026-10-20', 'upi', 'UPI LAKSHMI 20OCT');
 
-insert into crmpro.time_entries (firm_id, user_id, account_id, engagement_id, work_date, minutes, description, billable) values
+insert into public.time_entries (firm_id, user_id, account_id, engagement_id, work_date, minutes, description, billable) values
   ('a0000000-0000-4000-8000-000000000001', '33333333-3333-4333-8333-333333333333', 'b0000000-0000-4000-8000-000000000001', 'e2000000-0000-4000-8000-000000000001', '2026-11-12', 180, 'Vouching October purchase register', true),
   ('a0000000-0000-4000-8000-000000000001', '33333333-3333-4333-8333-333333333333', 'b0000000-0000-4000-8000-000000000004', 'e2000000-0000-4000-8000-000000000002', '2026-11-14', 90, 'GSTR-1 working and e-invoice reconciliation', true),
   ('a0000000-0000-4000-8000-000000000001', '44444444-4444-4444-8444-444444444444', 'b0000000-0000-4000-8000-000000000002', 'e2000000-0000-4000-8000-000000000003', '2026-11-18', 120, 'QRMP books for July to September', true),
   ('a0000000-0000-4000-8000-000000000001', '22222222-2222-4222-8222-222222222222', 'b0000000-0000-4000-8000-000000000003', null, '2026-11-19', 60, 'Scope call for the LLP engagement', false);
 
-insert into crmpro.documents (firm_id, account_id, financial_year, folder, name, storage_path, mime, size_bytes, uploaded_by, client_visible) values
+insert into public.documents (firm_id, account_id, financial_year, folder, name, storage_path, mime, size_bytes, uploaded_by, client_visible) values
   ('a0000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000001', '2026-27', 'Engagement', 'Engagement letter FY 2026-27.txt',
     'a0000000-0000-4000-8000-000000000001/b0000000-0000-4000-8000-000000000001/2026-27/engagement-letter.txt', 'text/plain', 420, '11111111-1111-4111-8111-111111111111', true);
 
-insert into crmpro.document_requests (firm_id, account_id, title, financial_year, folder, status, upload_token, notes) values
+insert into public.document_requests (firm_id, account_id, title, financial_year, folder, status, upload_token, notes) values
   ('a0000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000001', 'October 2026 bank statement', '2026-27', 'Bank', 'requested', 'murugan-bank-oct-2026', 'HDFC current account, PDF is enough.'),
   ('a0000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000002', 'Q2 purchase bills', '2026-27', 'GST', 'requested', 'lakshmi-q2-bills', 'Zip of July to September purchases.');
 
-insert into crmpro.workflow_rules (firm_id, name, trigger_event, actions, active) values
+insert into public.workflow_rules (firm_id, name, trigger_event, actions, active) values
   ('a0000000-0000-4000-8000-000000000001', 'New lead: assign Karthik and open a call task', 'lead.created',
     jsonb_build_array(
       jsonb_build_object('type', 'assign_owner', 'userId', '33333333-3333-4333-8333-333333333333'),
@@ -270,17 +270,17 @@ insert into crmpro.workflow_rules (firm_id, name, trigger_event, actions, active
       jsonb_build_object('type', 'notify', 'userId', '11111111-1111-4111-8111-111111111111', 'title', 'Deal stage changed', 'body', '{{deal_name}} is now in {{stage_name}}')
     ), true);
 
-insert into crmpro.message_templates (firm_id, channel, name, subject, body) values
+insert into public.message_templates (firm_id, channel, name, subject, body) values
   ('a0000000-0000-4000-8000-000000000001', 'whatsapp', 'Filing reminder', null,
     'Hello {{name}}, this is Kaveri & Co. {{filing}} for {{period}} is due on {{due_date}}. Please send the working papers if you have not already. — {{firm_name}}'),
   ('a0000000-0000-4000-8000-000000000001', 'email', 'Invoice', 'Invoice {{invoice_number}} from {{firm_name}}',
     'Dear {{name}},\n\nInvoice {{invoice_number}} for {{amount}} is attached. It is due on {{due_date}}.\n\nKaveri & Co., Chartered Accountants');
 
-insert into crmpro.notifications (firm_id, user_id, title, body, link) values
+insert into public.notifications (firm_id, user_id, title, body, link) values
   ('a0000000-0000-4000-8000-000000000001', '11111111-1111-4111-8111-111111111111', 'Three filings are overdue', 'Murugan Textiles and Lakshmi Sweets have returns past the due date.', '/compliance'),
   ('a0000000-0000-4000-8000-000000000001', '44444444-4444-4444-8444-444444444444', 'Lakshmi Sweets fee is partly unpaid', 'KA/26-27/011 has a balance after the UPI of Rs 5,000.', '/invoices');
 
-insert into crmpro.compliance_filings (
+insert into public.compliance_filings (
   firm_id, account_id, rule_code, name, period_key, period_label, fy_start_year,
   period_start, period_end, due_date, status, filed_at, acknowledgement_no, assigned_to
 ) values

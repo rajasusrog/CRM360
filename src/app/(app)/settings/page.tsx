@@ -34,7 +34,7 @@ export default async function SettingsPage() {
     session.supabase.from("outbound_messages").select("channel, recipient, status, created_at").eq("firm_id", session.firm.id).order("created_at", { ascending: false }).limit(5),
   ]);
   const seats = staff.data?.length ?? 0;
-  const origin = process.env.NEXT_PUBLIC_APP_URL || "http://127.0.0.1:43123";
+  const origin = process.env.NEXT_PUBLIC_APP_URL || "http://127.0.0.1:3000";
 
   return (
     <div className="grid gap-6">

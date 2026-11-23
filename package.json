@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000 -H 0.0.0.0",
-    "build": "node scripts/capture-build-env.mjs && opennextjs-cloudflare build && node scripts/patch-opennext-cookie.mjs",
+    "build": "next build",
     "build:next": "next build",
     "start": "next start -p 3000 -H 0.0.0.0",
     "lint": "eslint",
@@ -12,8 +12,7 @@
     "rules:sql": "node --experimental-strip-types scripts/build-rules-sql.ts",
     "seed:sql": "node --experimental-strip-types scripts/build-seed.ts",
     "preview:cf": "node scripts/capture-build-env.mjs && opennextjs-cloudflare build && node scripts/patch-opennext-cookie.mjs && opennextjs-cloudflare preview",
-    "deploy:cf": "node scripts/capture-build-env.mjs && opennextjs-cloudflare build && node scripts/patch-opennext-cookie.mjs && opennextjs-cloudflare deploy",
-    "test:db:isolated": "node scripts/test-crmpro-db.mjs"
+    "deploy:cf": "node scripts/capture-build-env.mjs && opennextjs-cloudflare build && node scripts/patch-opennext-cookie.mjs && opennextjs-cloudflare deploy"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
@@ -36,7 +35,6 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "0.5.17",
     "@opennextjs/cloudflare": "^1.20.18",
     "@tailwindcss/turbopack": "4.3.3",
     "@types/node": "^22.20.5",

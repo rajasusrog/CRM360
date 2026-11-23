@@ -1,15 +1,12 @@
 -- Unikorn360: firms, CRM, compliance calendar, billing, and audit.
 
--- Fresh namespace only: fail before touching anything if already present.
-create schema crmpro;
-revoke all on schema crmpro from public, anon;
-grant usage on schema crmpro to authenticated, service_role;
+create extension if not exists pgcrypto with schema extensions;
 
 -- ---------------------------------------------------------------------------
 -- Tenancy
 -- ---------------------------------------------------------------------------
 
-create table crmpro.firms (
+create table public.firms (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   city text,
@@ -32,9 +29,9 @@ create table crmpro.firms (
   constraint firms_state_code check (state_code ~ '^[0-9]{2}$')
 );
 
-create table crmpro.profiles (
+create table public.profiles (
   id uuid primary key references auth.users (id) on delete cascade,
-  firm_id uuid not null references crmpro.firms (id) on delete cascade,
+  firm_id uuid not null references public.firms (id) on delete cascade,
   full_name text not null,
   email text not null,
   phone text,
@@ -42,11 +39,11 @@ create table crmpro.profiles (
   created_at timestamptz not null default now()
 );
 
-create index profiles_firm_idx on crmpro.profiles (firm_id);
+create index profiles_firm_idx on public.profiles (firm_id);
 
-create table crmpro.accounts (
+create table public.accounts (
   id uuid primary key default gen_random_uuid(),
-  firm_id uuid not null references crmpro.firms (id) on delete cascade,
+  firm_id uuid not null references public.firms (id) on delete cascade,
   name text not null,
   entity_type text not null check (entity_type in (
     'individual', 'proprietorship', 'partnership', 'huf', 'llp', 'pvt_ltd', 'public_ltd', 'trust', 'society'
@@ -62,7 +59,7 @@ create table crmpro.accounts (
   address text,
   city text,
   pincode text,
-  assigned_staff_id uuid references crmpro.profiles (id) on delete set null,
+  assigned_staff_id uuid references public.profiles (id) on delete set null,
   portal_enabled boolean not null default false,
   status text not null default 'active' check (status in ('active', 'inactive')),
   consent_data_processing boolean not null default false,
@@ -77,12 +74,12 @@ create table crmpro.accounts (
   constraint accounts_state_code check (state_code ~ '^[0-9]{2}$' and place_of_supply ~ '^[0-9]{2}$')
 );
 
-create index accounts_firm_idx on crmpro.accounts (firm_id);
+create index accounts_firm_idx on public.accounts (firm_id);
 
-create table crmpro.contacts (
+create table public.contacts (
   id uuid primary key default gen_random_uuid(),
-  firm_id uuid not null references crmpro.firms (id) on delete cascade,
-  account_id uuid references crmpro.accounts (id) on delete set null,
+  firm_id uuid not null references public.firms (id) on delete cascade,
+  account_id uuid references public.accounts (id) on delete set null,
   first_name text not null,
   last_name text,
   email text,
@@ -99,20 +96,20 @@ create table crmpro.contacts (
   updated_at timestamptz not null default now()
 );
 
-create index contacts_firm_idx on crmpro.contacts (firm_id);
-create index contacts_account_idx on crmpro.contacts (account_id);
+create index contacts_firm_idx on public.contacts (firm_id);
+create index contacts_account_idx on public.contacts (account_id);
 
-create table crmpro.client_users (
+create table public.client_users (
   id uuid primary key references auth.users (id) on delete cascade,
-  firm_id uuid not null references crmpro.firms (id) on delete cascade,
-  account_id uuid not null references crmpro.accounts (id) on delete cascade,
-  contact_id uuid references crmpro.contacts (id) on delete set null,
+  firm_id uuid not null references public.firms (id) on delete cascade,
+  account_id uuid not null references public.accounts (id) on delete cascade,
+  contact_id uuid references public.contacts (id) on delete set null,
   created_at timestamptz not null default now()
 );
 
-create table crmpro.invitations (
+create table public.invitations (
   id uuid primary key default gen_random_uuid(),
-  firm_id uuid not null references crmpro.firms (id) on delete cascade,
+  firm_id uuid not null references public.firms (id) on delete cascade,
   email text not null,
   role text not null check (role in ('partner', 'staff', 'readonly')),
   token text not null unique,
@@ -121,10 +118,10 @@ create table crmpro.invitations (
   created_at timestamptz not null default now()
 );
 
-create table crmpro.portal_invites (
+create table public.portal_invites (
   id uuid primary key default gen_random_uuid(),
-  firm_id uuid not null references crmpro.firms (id) on delete cascade,
-  account_id uuid not null references crmpro.accounts (id) on delete cascade,
+  firm_id uuid not null references public.firms (id) on delete cascade,
+  account_id uuid not null references public.accounts (id) on delete cascade,
   email text not null,
   token text not null unique,
   accepted_at timestamptz,
@@ -135,9 +132,9 @@ create table crmpro.portal_invites (
 -- CRM
 -- ---------------------------------------------------------------------------
 
-create table crmpro.leads (
+create table public.leads (
   id uuid primary key default gen_random_uuid(),
-  firm_id uuid not null references crmpro.firms (id) on delete cascade,
+  firm_id uuid not null references public.firms (id) on delete cascade,
   first_name text not null,
   last_name text,
   email text,
@@ -145,7 +142,7 @@ create table crmpro.leads (
   company text,
   source text not null default 'manual',
   status text not null default 'new' check (status in ('new', 'contacted', 'qualified', 'unqualified', 'converted')),
-  owner_id uuid references crmpro.profiles (id) on delete set null,
+  owner_id uuid references public.profiles (id) on delete set null,
   gstin text,
   pan text,
   city text,
@@ -154,20 +151,20 @@ create table crmpro.leads (
   consent_marketing boolean not null default false,
   consent_purpose text,
   consent_at timestamptz,
-  converted_account_id uuid references crmpro.accounts (id) on delete set null,
-  converted_contact_id uuid references crmpro.contacts (id) on delete set null,
+  converted_account_id uuid references public.accounts (id) on delete set null,
+  converted_contact_id uuid references public.contacts (id) on delete set null,
   web_form_id uuid,
   custom_fields jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
-create index leads_firm_status_idx on crmpro.leads (firm_id, status);
-create index leads_firm_created_idx on crmpro.leads (firm_id, created_at desc);
+create index leads_firm_status_idx on public.leads (firm_id, status);
+create index leads_firm_created_idx on public.leads (firm_id, created_at desc);
 
-create table crmpro.pipeline_stages (
+create table public.pipeline_stages (
   id uuid primary key default gen_random_uuid(),
-  firm_id uuid not null references crmpro.firms (id) on delete cascade,
+  firm_id uuid not null references public.firms (id) on delete cascade,
   name text not null,
   position integer not null,
   probability integer not null default 0 check (probability between 0 and 100),
@@ -176,18 +173,18 @@ create table crmpro.pipeline_stages (
   color text not null default '#1c6b5a'
 );
 
-create index pipeline_stages_firm_idx on crmpro.pipeline_stages (firm_id, position);
+create index pipeline_stages_firm_idx on public.pipeline_stages (firm_id, position);
 
-create table crmpro.deals (
+create table public.deals (
   id uuid primary key default gen_random_uuid(),
-  firm_id uuid not null references crmpro.firms (id) on delete cascade,
+  firm_id uuid not null references public.firms (id) on delete cascade,
   name text not null,
-  account_id uuid references crmpro.accounts (id) on delete set null,
-  contact_id uuid references crmpro.contacts (id) on delete set null,
-  stage_id uuid not null references crmpro.pipeline_stages (id),
+  account_id uuid references public.accounts (id) on delete set null,
+  contact_id uuid references public.contacts (id) on delete set null,
+  stage_id uuid not null references public.pipeline_stages (id),
   amount numeric(14, 2) not null default 0 check (amount >= 0),
   expected_close date,
-  owner_id uuid references crmpro.profiles (id) on delete set null,
+  owner_id uuid references public.profiles (id) on delete set null,
   source text,
   notes text,
   custom_fields jsonb not null default '{}'::jsonb,
@@ -195,11 +192,11 @@ create table crmpro.deals (
   updated_at timestamptz not null default now()
 );
 
-create index deals_firm_stage_idx on crmpro.deals (firm_id, stage_id);
+create index deals_firm_stage_idx on public.deals (firm_id, stage_id);
 
-create table crmpro.activities (
+create table public.activities (
   id uuid primary key default gen_random_uuid(),
-  firm_id uuid not null references crmpro.firms (id) on delete cascade,
+  firm_id uuid not null references public.firms (id) on delete cascade,
   type text not null check (type in ('task', 'call', 'meeting', 'note')),
   subject text not null,
   body text,
@@ -207,34 +204,34 @@ create table crmpro.activities (
   completed_at timestamptz,
   related_type text check (related_type in ('lead', 'contact', 'account', 'deal', 'filing', 'invoice')),
   related_id uuid,
-  owner_id uuid references crmpro.profiles (id) on delete set null,
+  owner_id uuid references public.profiles (id) on delete set null,
   reminder_at timestamptz,
   created_at timestamptz not null default now()
 );
 
-create index activities_firm_due_idx on crmpro.activities (firm_id, due_at);
+create index activities_firm_due_idx on public.activities (firm_id, due_at);
 
-create table crmpro.tags (
+create table public.tags (
   id uuid primary key default gen_random_uuid(),
-  firm_id uuid not null references crmpro.firms (id) on delete cascade,
+  firm_id uuid not null references public.firms (id) on delete cascade,
   name text not null,
   color text not null default '#9a7040',
   unique (firm_id, name)
 );
 
-create table crmpro.record_tags (
-  firm_id uuid not null references crmpro.firms (id) on delete cascade,
-  tag_id uuid not null references crmpro.tags (id) on delete cascade,
+create table public.record_tags (
+  firm_id uuid not null references public.firms (id) on delete cascade,
+  tag_id uuid not null references public.tags (id) on delete cascade,
   record_type text not null check (record_type in ('lead', 'contact', 'account', 'deal')),
   record_id uuid not null,
   primary key (tag_id, record_type, record_id)
 );
 
-create index record_tags_record_idx on crmpro.record_tags (record_type, record_id);
+create index record_tags_record_idx on public.record_tags (record_type, record_id);
 
-create table crmpro.custom_field_defs (
+create table public.custom_field_defs (
   id uuid primary key default gen_random_uuid(),
-  firm_id uuid not null references crmpro.firms (id) on delete cascade,
+  firm_id uuid not null references public.firms (id) on delete cascade,
   module text not null check (module in ('lead', 'contact', 'account', 'deal')),
   key text not null,
   label text not null,
@@ -245,10 +242,10 @@ create table crmpro.custom_field_defs (
   unique (firm_id, module, key)
 );
 
-create table crmpro.saved_views (
+create table public.saved_views (
   id uuid primary key default gen_random_uuid(),
-  firm_id uuid not null references crmpro.firms (id) on delete cascade,
-  user_id uuid references crmpro.profiles (id) on delete cascade,
+  firm_id uuid not null references public.firms (id) on delete cascade,
+  user_id uuid references public.profiles (id) on delete cascade,
   module text not null,
   name text not null,
   filters jsonb not null default '{}'::jsonb,
@@ -260,9 +257,9 @@ create table crmpro.saved_views (
 -- Practice
 -- ---------------------------------------------------------------------------
 
-create table crmpro.compliance_rules (
+create table public.compliance_rules (
   id uuid primary key default gen_random_uuid(),
-  firm_id uuid references crmpro.firms (id) on delete cascade,
+  firm_id uuid references public.firms (id) on delete cascade,
   code text not null,
   variant text not null,
   name text not null,
@@ -277,9 +274,9 @@ create table crmpro.compliance_rules (
   constraint compliance_rules_identity unique nulls not distinct (firm_id, code, variant)
 );
 
-create table crmpro.compliance_rule_periods (
+create table public.compliance_rule_periods (
   id uuid primary key default gen_random_uuid(),
-  rule_id uuid not null references crmpro.compliance_rules (id) on delete cascade,
+  rule_id uuid not null references public.compliance_rules (id) on delete cascade,
   period_key text not null,
   label text not null,
   start_month integer not null check (start_month between 1 and 12),
@@ -293,10 +290,10 @@ create table crmpro.compliance_rule_periods (
   unique (rule_id, period_key)
 );
 
-create table crmpro.compliance_filings (
+create table public.compliance_filings (
   id uuid primary key default gen_random_uuid(),
-  firm_id uuid not null references crmpro.firms (id) on delete cascade,
-  account_id uuid not null references crmpro.accounts (id) on delete cascade,
+  firm_id uuid not null references public.firms (id) on delete cascade,
+  account_id uuid not null references public.accounts (id) on delete cascade,
   rule_code text not null,
   name text not null,
   period_key text not null,
@@ -308,18 +305,18 @@ create table crmpro.compliance_filings (
   status text not null default 'pending' check (status in ('pending', 'in_progress', 'filed')),
   filed_at timestamptz,
   acknowledgement_no text,
-  assigned_to uuid references crmpro.profiles (id) on delete set null,
+  assigned_to uuid references public.profiles (id) on delete set null,
   notes text,
   unique (account_id, rule_code, fy_start_year, period_key)
 );
 
-create index filings_firm_due_idx on crmpro.compliance_filings (firm_id, due_date);
-create index filings_account_idx on crmpro.compliance_filings (account_id);
+create index filings_firm_due_idx on public.compliance_filings (firm_id, due_date);
+create index filings_account_idx on public.compliance_filings (account_id);
 
-create table crmpro.engagements (
+create table public.engagements (
   id uuid primary key default gen_random_uuid(),
-  firm_id uuid not null references crmpro.firms (id) on delete cascade,
-  account_id uuid not null references crmpro.accounts (id) on delete cascade,
+  firm_id uuid not null references public.firms (id) on delete cascade,
+  account_id uuid not null references public.accounts (id) on delete cascade,
   service_name text not null,
   sac_code text not null default '998222',
   fee numeric(14, 2) not null default 0 check (fee >= 0),
@@ -330,11 +327,11 @@ create table crmpro.engagements (
   created_at timestamptz not null default now()
 );
 
-create table crmpro.invoices (
+create table public.invoices (
   id uuid primary key default gen_random_uuid(),
-  firm_id uuid not null references crmpro.firms (id) on delete cascade,
-  account_id uuid not null references crmpro.accounts (id) on delete restrict,
-  engagement_id uuid references crmpro.engagements (id) on delete set null,
+  firm_id uuid not null references public.firms (id) on delete cascade,
+  account_id uuid not null references public.accounts (id) on delete restrict,
+  engagement_id uuid references public.engagements (id) on delete set null,
   invoice_number text not null,
   invoice_date date not null,
   due_date date,
@@ -352,12 +349,12 @@ create table crmpro.invoices (
   unique (firm_id, invoice_number)
 );
 
-create index invoices_firm_date_idx on crmpro.invoices (firm_id, invoice_date desc);
+create index invoices_firm_date_idx on public.invoices (firm_id, invoice_date desc);
 
-create table crmpro.invoice_payments (
+create table public.invoice_payments (
   id uuid primary key default gen_random_uuid(),
-  firm_id uuid not null references crmpro.firms (id) on delete cascade,
-  invoice_id uuid not null references crmpro.invoices (id) on delete cascade,
+  firm_id uuid not null references public.firms (id) on delete cascade,
+  invoice_id uuid not null references public.invoices (id) on delete cascade,
   amount numeric(14, 2) not null check (amount > 0),
   paid_on date not null,
   mode text not null default 'bank',
@@ -365,12 +362,12 @@ create table crmpro.invoice_payments (
   created_at timestamptz not null default now()
 );
 
-create table crmpro.time_entries (
+create table public.time_entries (
   id uuid primary key default gen_random_uuid(),
-  firm_id uuid not null references crmpro.firms (id) on delete cascade,
-  user_id uuid not null references crmpro.profiles (id) on delete cascade,
-  account_id uuid references crmpro.accounts (id) on delete set null,
-  engagement_id uuid references crmpro.engagements (id) on delete set null,
+  firm_id uuid not null references public.firms (id) on delete cascade,
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  account_id uuid references public.accounts (id) on delete set null,
+  engagement_id uuid references public.engagements (id) on delete set null,
   work_date date not null,
   minutes integer not null check (minutes > 0 and minutes <= 1440),
   description text,
@@ -378,12 +375,12 @@ create table crmpro.time_entries (
   created_at timestamptz not null default now()
 );
 
-create index time_entries_firm_date_idx on crmpro.time_entries (firm_id, work_date desc);
+create index time_entries_firm_date_idx on public.time_entries (firm_id, work_date desc);
 
-create table crmpro.documents (
+create table public.documents (
   id uuid primary key default gen_random_uuid(),
-  firm_id uuid not null references crmpro.firms (id) on delete cascade,
-  account_id uuid not null references crmpro.accounts (id) on delete cascade,
+  firm_id uuid not null references public.firms (id) on delete cascade,
+  account_id uuid not null references public.accounts (id) on delete cascade,
   financial_year text not null,
   folder text not null default 'General',
   name text not null,
@@ -395,12 +392,12 @@ create table crmpro.documents (
   created_at timestamptz not null default now()
 );
 
-create index documents_account_idx on crmpro.documents (account_id, financial_year);
+create index documents_account_idx on public.documents (account_id, financial_year);
 
-create table crmpro.document_requests (
+create table public.document_requests (
   id uuid primary key default gen_random_uuid(),
-  firm_id uuid not null references crmpro.firms (id) on delete cascade,
-  account_id uuid not null references crmpro.accounts (id) on delete cascade,
+  firm_id uuid not null references public.firms (id) on delete cascade,
+  account_id uuid not null references public.accounts (id) on delete cascade,
   title text not null,
   financial_year text not null,
   folder text not null default 'Client uploads',
@@ -414,9 +411,9 @@ create table crmpro.document_requests (
 -- Automation, messages, audit
 -- ---------------------------------------------------------------------------
 
-create table crmpro.workflow_rules (
+create table public.workflow_rules (
   id uuid primary key default gen_random_uuid(),
-  firm_id uuid not null references crmpro.firms (id) on delete cascade,
+  firm_id uuid not null references public.firms (id) on delete cascade,
   name text not null,
   trigger_event text not null check (trigger_event in ('lead.created', 'deal.stage_changed')),
   actions jsonb not null,
@@ -424,9 +421,9 @@ create table crmpro.workflow_rules (
   created_at timestamptz not null default now()
 );
 
-create table crmpro.message_templates (
+create table public.message_templates (
   id uuid primary key default gen_random_uuid(),
-  firm_id uuid not null references crmpro.firms (id) on delete cascade,
+  firm_id uuid not null references public.firms (id) on delete cascade,
   channel text not null check (channel in ('email', 'whatsapp')),
   name text not null,
   subject text,
@@ -434,9 +431,9 @@ create table crmpro.message_templates (
   created_at timestamptz not null default now()
 );
 
-create table crmpro.outbound_messages (
+create table public.outbound_messages (
   id uuid primary key default gen_random_uuid(),
-  firm_id uuid not null references crmpro.firms (id) on delete cascade,
+  firm_id uuid not null references public.firms (id) on delete cascade,
   channel text not null,
   recipient text not null,
   subject text,
@@ -448,10 +445,10 @@ create table crmpro.outbound_messages (
   created_at timestamptz not null default now()
 );
 
-create table crmpro.notifications (
+create table public.notifications (
   id uuid primary key default gen_random_uuid(),
-  firm_id uuid not null references crmpro.firms (id) on delete cascade,
-  user_id uuid not null references crmpro.profiles (id) on delete cascade,
+  firm_id uuid not null references public.firms (id) on delete cascade,
+  user_id uuid not null references public.profiles (id) on delete cascade,
   title text not null,
   body text,
   link text,
@@ -459,11 +456,11 @@ create table crmpro.notifications (
   created_at timestamptz not null default now()
 );
 
-create index notifications_user_idx on crmpro.notifications (user_id, created_at desc);
+create index notifications_user_idx on public.notifications (user_id, created_at desc);
 
-create table crmpro.audit_logs (
+create table public.audit_logs (
   id uuid primary key default gen_random_uuid(),
-  firm_id uuid not null references crmpro.firms (id) on delete cascade,
+  firm_id uuid not null references public.firms (id) on delete cascade,
   actor_id uuid,
   action text not null,
   entity_type text not null,
@@ -472,18 +469,18 @@ create table crmpro.audit_logs (
   created_at timestamptz not null default now()
 );
 
-create index audit_logs_firm_idx on crmpro.audit_logs (firm_id, created_at desc);
+create index audit_logs_firm_idx on public.audit_logs (firm_id, created_at desc);
 
-create table crmpro.web_forms (
+create table public.web_forms (
   id uuid primary key default gen_random_uuid(),
-  firm_id uuid not null references crmpro.firms (id) on delete cascade,
+  firm_id uuid not null references public.firms (id) on delete cascade,
   name text not null,
   public_key text not null unique,
-  default_owner_id uuid references crmpro.profiles (id) on delete set null,
+  default_owner_id uuid references public.profiles (id) on delete set null,
   default_source text not null default 'web-form',
   active boolean not null default true,
   created_at timestamptz not null default now()
 );
 
-alter table crmpro.leads
-  add constraint leads_web_form_fk foreign key (web_form_id) references crmpro.web_forms (id) on delete set null;
+alter table public.leads
+  add constraint leads_web_form_fk foreign key (web_form_id) references public.web_forms (id) on delete set null;

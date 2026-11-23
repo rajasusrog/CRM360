@@ -3,13 +3,13 @@ import { ActionForm, Submit } from "@/components/action-form";
 import { Field, SelectField } from "@/components/kit";
 import { INDIAN_STATES } from "@/lib/constants";
 import { getSession } from "@/lib/session";
-import { sessionDestination } from "@/lib/auth-routing";
 import { createFirm } from "@/server/actions/auth";
 
 export default async function OnboardingPage() {
   const session = await getSession();
-  const destination = sessionDestination(session);
-  if (destination !== "/onboarding") redirect(destination);
+  if (!session.user) redirect("/login");
+  if (session.client) redirect("/portal");
+  if (session.profile) redirect("/dashboard");
 
   return (
     <main className="mx-auto max-w-xl px-5 py-12">

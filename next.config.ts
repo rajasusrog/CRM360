@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  allowedDevOrigins: ["127.0.0.1", "*.trycloudflare.com"],
+  output: "standalone",
+  allowedDevOrigins: ["127.0.0.1", "localhost", "**.run.app", "**.trycloudflare.com"],
   async rewrites() {
     return [
       {

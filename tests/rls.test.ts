@@ -16,7 +16,6 @@ const firmB = "bb000000-0000-4000-8000-0000000000b1";
 
 const setup = `
 begin;
-set local search_path = crmpro, public;
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
   raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
